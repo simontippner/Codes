@@ -100,6 +100,64 @@ def hex_to_rgb01(hexcode):
     return tuple(int(hexcode[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
+def rgb01_to_hex(rgb01):
+    r, g, b = (int(round(np.clip(c, 0, 1) * 255)) for c in rgb01)
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# --- sRGB <-> CIELAB (D65), used for perceptually-uniform gradient
+# interpolation and for farthest-point selection of distinct colors ---
+_SRGB2XYZ = np.array([[0.4124564, 0.3575761, 0.1804375],
+                       [0.2126729, 0.7151522, 0.0721750],
+                       [0.0193339, 0.1191920, 0.9503041]])
+_XYZ2SRGB = np.linalg.inv(_SRGB2XYZ)
+_WHITE = np.array([95.047, 100.0, 108.883])  # D65 reference white
+
+
+def rgb01_to_lab(rgb01):
+    rgb = np.clip(np.asarray(rgb01, dtype=float), 0, 1)
+    lin = np.where(rgb <= 0.04045, rgb / 12.92, ((rgb + 0.055) / 1.055) ** 2.4)
+    xyz = (_SRGB2XYZ @ lin) * 100.0
+    t = xyz / _WHITE
+    delta = 6.0 / 29.0
+    ft = np.where(t > delta ** 3, np.cbrt(t), t / (3 * delta ** 2) + 4.0 / 29.0)
+    L = 116 * ft[1] - 16
+    a = 500 * (ft[0] - ft[1])
+    b = 200 * (ft[1] - ft[2])
+    return np.array([L, a, b])
+
+
+def lab_to_rgb01(lab):
+    L, a, b = lab
+    fy = (L + 16) / 116
+    fx = fy + a / 500
+    fz = fy - b / 200
+    delta = 6.0 / 29.0
+
+    def finv(t):
+        return np.where(t > delta, t ** 3, 3 * delta ** 2 * (t - 4.0 / 29.0))
+
+    xyz = np.array([finv(fx), finv(fy), finv(fz)]) * _WHITE / 100.0
+    lin = _XYZ2SRGB @ xyz
+    lin = np.clip(lin, 0, 1)
+    srgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * lin ** (1 / 2.4) - 0.055)
+    return tuple(np.clip(srgb, 0, 1))
+
+
+def interpolate_lab(anchor_hexes, n_steps):
+    """Piecewise-linear interpolation through a sequence of anchor colors in
+    CIELAB space (perceptually much smoother than interpolating raw RGB),
+    returning n_steps evenly-spaced hex colors spanning the full sequence."""
+    anchors_lab = np.array([rgb01_to_lab(hex_to_rgb01(h)) for h in anchor_hexes])
+    t_anchors = np.linspace(0, 1, len(anchors_lab))
+    t_samples = np.linspace(0, 1, n_steps)
+    lab_samples = np.column_stack([
+        np.interp(t_samples, t_anchors, anchors_lab[:, dim]) for dim in range(3)
+    ])
+    rgb_samples = [lab_to_rgb01(lab) for lab in lab_samples]
+    return [rgb01_to_hex(rgb) for rgb in rgb_samples], rgb_samples
+
+
 def simulate_cvd(rgb01, kind):
     M = CVD_MATRICES[kind]
     return tuple(np.clip(M @ np.array(rgb01), 0, 1))
@@ -218,6 +276,131 @@ def cmd_gallery(args, colors, combos):
           f"ids: {filtered[0][0]}-{filtered[-1][0]})")
 
 
+def render_gradient(anchor_hexes, step_hexes, out_prefix):
+    """Top: a smooth, continuous colormap bar (256-step Lab interpolation)
+    suitable as a publication colorbar. Bottom: the discrete requested
+    steps, labeled with hex codes, for use as a categorical/ordinal list."""
+    smooth_hexes, _ = interpolate_lab(anchor_hexes, 256)
+    smooth_rgb = np.array([hex_to_rgb01(h) for h in smooth_hexes])[None, :, :]
+
+    n = len(step_hexes)
+    fig, (ax_bar, ax_steps) = plt.subplots(
+        2, 1, figsize=(max(6, 0.9 * n), 2.6), gridspec_kw={"height_ratios": [1, 1.3]})
+
+    ax_bar.imshow(smooth_rgb, aspect="auto", extent=[0, n, 0, 1])
+    ax_bar.set_xlim(0, n)
+    ax_bar.axis("off")
+    ax_bar.set_title("continuous", fontsize=8, color="0.4", loc="left")
+
+    for i, h in enumerate(step_hexes):
+        rgb = hex_to_rgb01(h)
+        ax_steps.add_patch(Rectangle((i, 0), 1, 1, facecolor=rgb, edgecolor="white",
+                                      linewidth=1.5))
+        ax_steps.text(i + 0.5, 0.5, h, ha="center", va="center", fontsize=7,
+                       color=readable_text_color(rgb), family="monospace")
+    ax_steps.set_xlim(0, n)
+    ax_steps.set_ylim(0, 1)
+    ax_steps.axis("off")
+    ax_steps.set_title(f"{n} discrete steps", fontsize=8, color="0.4", loc="left")
+
+    fig.tight_layout()
+    fig.savefig(f"{out_prefix}.png", dpi=300)
+    fig.savefig(f"{out_prefix}.pdf")
+    plt.close(fig)
+
+
+def write_gradient_snippets(anchor_hexes, step_hexes, out_prefix):
+    with open(f"{out_prefix}_python.txt", "w") as f:
+        f.write("# Sanzo Wada gradient -- paste into a matplotlib script\n")
+        f.write(f"# Lab-interpolated through: {', '.join(anchor_hexes)}\n\n")
+        f.write("from matplotlib.colors import LinearSegmentedColormap\n")
+        f.write(f"GRADIENT_STEPS = {step_hexes!r}\n")
+        f.write(f"GRADIENT_CMAP = LinearSegmentedColormap.from_list("
+                f"'sanzo_wada_gradient', {anchor_hexes!r}, N=256)\n")
+        f.write("# GRADIENT_CMAP interpolates in raw RGB; for the exact Lab-space\n")
+        f.write("# curve this script used, sample interpolate_lab() directly instead.\n")
+
+    with open(f"{out_prefix}_latex.tex", "w") as f:
+        f.write("% Sanzo Wada gradient steps -- paste into your LaTeX preamble\n")
+        f.write("\\usepackage{xcolor}\n")
+        for i, h in enumerate(step_hexes):
+            f.write(f"\\definecolor{{GradStep{i}}}{{HTML}}{{{h.lstrip('#').upper()}}}\n")
+
+    with open(f"{out_prefix}.json", "w") as f:
+        json.dump({"anchors": anchor_hexes, "steps": step_hexes}, f, indent=2)
+
+
+def cmd_gradient(args, colors, combos):
+    if args.from_combination:
+        if args.from_combination not in combos:
+            sys.exit(f"No such combination id: {args.from_combination} (valid range 1-348)")
+        anchor_hexes = [c["hex"] for c in combos[args.from_combination]]
+    elif args.colors:
+        anchor_hexes = [h.strip() for h in args.colors.split(",")]
+    else:
+        sys.exit("Provide anchor colors via --colors '#hex,#hex,...' or --from-combination <id>")
+
+    if len(anchor_hexes) < 2:
+        sys.exit("Need at least 2 anchor colors to make a gradient")
+
+    step_hexes, _ = interpolate_lab(anchor_hexes, args.steps)
+    render_gradient(anchor_hexes, step_hexes, args.out)
+    write_gradient_snippets(anchor_hexes, step_hexes, args.out)
+    print(f"Anchors: {', '.join(anchor_hexes)}")
+    print(f"{args.steps} steps: {', '.join(step_hexes)}")
+    print(f"Wrote {args.out}.png, {args.out}.pdf, {args.out}_python.txt, "
+          f"{args.out}_latex.tex, {args.out}.json")
+
+
+def farthest_point_select(colors, n):
+    """Greedy farthest-point sampling in CIELAB space: start from the color
+    most extreme relative to the full set's centroid, then repeatedly add
+    whichever remaining color maximizes its minimum distance to everything
+    already chosen -- a simple, deterministic way to get n mutually
+    well-separated colors out of the 159-color set."""
+    labs = np.array([c["lab"] for c in colors])
+    centroid = labs.mean(axis=0)
+    chosen = [int(np.argmax(np.linalg.norm(labs - centroid, axis=1)))]
+    while len(chosen) < n:
+        d = np.linalg.norm(labs[:, None, :] - labs[chosen][None, :, :], axis=-1).min(axis=1)
+        d[chosen] = -np.inf
+        chosen.append(int(np.argmax(d)))
+    return [colors[i] for i in chosen]
+
+
+def min_pairwise_lab_distance(labs):
+    labs = np.asarray(labs)
+    d = np.linalg.norm(labs[:, None, :] - labs[None, :, :], axis=-1)
+    np.fill_diagonal(d, np.inf)
+    return float(d.min())
+
+
+def cmd_distinct(args, colors, combos):
+    if args.n < 2:
+        sys.exit("--n must be at least 2")
+    if args.n > len(colors):
+        sys.exit(f"--n cannot exceed the {len(colors)} available colors")
+
+    picked = farthest_point_select(colors, args.n)
+    labs = np.array([c["lab"] for c in picked])
+
+    print(f"{args.n} maximally-distinct colors (greedy farthest-point, CIELAB):")
+    for c in picked:
+        print(f"  {c['hex']}   {c['name']}")
+    print(f"Min pairwise CIE76 Delta-E (normal vision): {min_pairwise_lab_distance(labs):.1f}"
+          "  (as a rule of thumb, >10 is usually safely distinguishable, >20 very safe)")
+
+    for kind in ("protanopia", "deuteranopia", "tritanopia"):
+        sim_labs = [rgb01_to_lab(simulate_cvd(hex_to_rgb01(c["hex"]), kind)) for c in picked]
+        print(f"Min pairwise Delta-E under simulated {kind}: "
+              f"{min_pairwise_lab_distance(sim_labs):.1f}")
+
+    render_swatch(picked, args.out, cvd_preview=args.cvd_preview)
+    write_snippets(picked, args.out)
+    print(f"Wrote {args.out}.png, {args.out}.pdf, {args.out}_python.txt, "
+          f"{args.out}_latex.tex, {args.out}.json")
+
+
 def write_snippets(members, out_prefix):
     hexes = [c["hex"] for c in members]
     names = [c["name"] for c in members]
@@ -299,12 +482,31 @@ def main():
                             help="max combinations to include (default 30)")
     p_gallery.add_argument("--out", default="sanzo_wada_gallery", help="output basename")
 
+    p_gradient = sub.add_parser(
+        "gradient", help="build a smooth, perceptually-interpolated gradient/colormap")
+    g_src = p_gradient.add_mutually_exclusive_group(required=True)
+    g_src.add_argument("--colors", help="comma-separated anchor hex colors, e.g. '#112233,#ffee00'")
+    g_src.add_argument("--from-combination", type=int,
+                        help="use an existing combination's colors as the anchors, in order")
+    p_gradient.add_argument("--steps", type=int, default=8,
+                             help="number of discrete steps to also output (default 8)")
+    p_gradient.add_argument("--out", default="sanzo_wada_gradient", help="output basename")
+
+    p_distinct = sub.add_parser(
+        "distinct", help="pick N maximally-separated colors for a categorical/identity palette")
+    p_distinct.add_argument("--n", type=int, required=True,
+                             help="how many distinct colors to pick")
+    p_distinct.add_argument("--out", default="sanzo_wada_distinct", help="output basename")
+    p_distinct.add_argument("--cvd-preview", action="store_true",
+                             help="add protanopia/deuteranopia/tritanopia preview rows")
+
     args = p.parse_args()
     colors = fetch_colors(refresh=args.refresh)
     combos = build_combinations(colors)
 
     {"list": cmd_list, "show": cmd_show, "export": cmd_export,
-     "random": cmd_random, "gallery": cmd_gallery}[args.command](args, colors, combos)
+     "random": cmd_random, "gallery": cmd_gallery, "gradient": cmd_gradient,
+     "distinct": cmd_distinct}[args.command](args, colors, combos)
 
 
 if __name__ == "__main__":

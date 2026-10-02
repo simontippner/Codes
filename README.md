@@ -79,3 +79,17 @@ is simulated.
     — render many combinations at once as a single browsable grid figure
     (one row per combination, labeled by id on the left), for visually
     scanning a filtered set instead of reading hex codes off `list`.
+  - `gradient (--colors '#hex,#hex,...' | --from-combination <id>)
+    [--steps 8] [--out <prefix>]` — build a smooth, perceptually-uniform
+    gradient/colormap by interpolating through 2+ anchor colors in CIELAB
+    space (much smoother than interpolating raw RGB). Renders a continuous
+    256-step colorbar plus the requested number of discrete steps, and
+    writes a ready-to-use `LinearSegmentedColormap` to the Python snippet.
+  - `distinct --n N [--out <prefix>] [--cvd-preview]` — pick N
+    maximally-separated colors out of the full 159-color set via greedy
+    farthest-point sampling in CIELAB space, for a categorical/identity
+    palette rather than an aesthetically-coordinated combination. Prints
+    the minimum pairwise CIE76 Delta-E among the picks, both for normal
+    vision and simulated under each CVD type — this is a real diagnostic
+    (it will honestly report a low Delta-E if two picks collide under e.g.
+    deuteranopia), not just a picture to eyeball.
