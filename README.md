@@ -44,3 +44,12 @@ is simulated.
   ready for a joint geometry optimization. Paths to the two input
   fragments, the gap distance, and the output path are set as constants at
   the top of the script.
+
+- **`make_trj_xyz.py`** — extracts every `CARTESIAN COORDINATES (ANGSTROEM)`
+  block from an ORCA geometry-optimization log file and writes them out as a
+  standard multi-frame xyz trajectory (one frame per optimization cycle,
+  readable directly in VMD or any other xyz-trajectory viewer). Works even
+  while the optimization job is still running, since it only needs the
+  live-written `.log` file on the shared filesystem — not the job's
+  node-local scratch directory, which usually isn't accessible until the
+  job finishes. Usage: `python3 make_trj_xyz.py <job>.log <output>.xyz`.
