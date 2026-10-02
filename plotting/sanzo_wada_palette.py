@@ -105,6 +105,14 @@ def simulate_cvd(rgb01, kind):
     return tuple(np.clip(M @ np.array(rgb01), 0, 1))
 
 
+def readable_text_color(rgb01):
+    """Black or white, whichever contrasts better against this background
+    (simple relative-luminance threshold)."""
+    r, g, b = rgb01
+    luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return "black" if luminance > 0.55 else "white"
+
+
 def cmd_list(args, colors, combos):
     ids = sorted(combos)
     for cid in ids:
@@ -170,8 +178,11 @@ def render_gallery(filtered, out_prefix, max_colors):
     for row_i, (cid, members) in enumerate(filtered):
         y = rows - row_i - 1  # first result at the top
         for i, c in enumerate(members):
-            ax.add_patch(Rectangle((i, y), 1, 0.85, facecolor=hex_to_rgb01(c["hex"]),
+            rgb = hex_to_rgb01(c["hex"])
+            ax.add_patch(Rectangle((i, y), 1, 0.85, facecolor=rgb,
                                     edgecolor="white", linewidth=0.8))
+            ax.text(i + 0.5, y + 0.425, c["hex"], ha="center", va="center",
+                     fontsize=6, color=readable_text_color(rgb), family="monospace")
         ax.text(-0.15, y + 0.425, f"#{cid}", ha="right", va="center",
                  fontsize=7, color="0.35", family="monospace")
 
