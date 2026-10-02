@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Large/binary job output (keep scripts, not run artifacts)
+*.gbw
+*.densities
+*.densitiesinfo
+*.cpcm
+*.cpcm_corr
+slurm-*.out
+I_CRASHED
+SCRATCH
