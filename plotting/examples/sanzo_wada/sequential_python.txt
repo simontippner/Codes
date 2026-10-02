@@ -1,0 +1,8 @@
+# Sanzo Wada gradient -- paste into a matplotlib script
+# Lab-interpolated through: #eff0fa, #1c4286, #003377
+
+from matplotlib.colors import LinearSegmentedColormap
+GRADIENT_STEPS = ['#eff0fa', '#b6bad8', '#7e87b7', '#435896', '#194084', '#123b80', '#0a377b', '#003377']
+GRADIENT_CMAP = LinearSegmentedColormap.from_list('sanzo_wada_gradient', ['#eff0fa', '#1c4286', '#003377'], N=256)
+# GRADIENT_CMAP interpolates in raw RGB; for the exact Lab-space
+# curve this script used, sample interpolate_lab() directly instead.

@@ -1,0 +1,8 @@
+# Sanzo Wada palette -- paste into a matplotlib script
+PALETTE = [
+    "#fff200",  # Yellow
+    "#1c4286",  # Deep Lyons Blue
+    "#e31f26",  # Spectrum Red
+    "#009465",  # Dull Viridian Green
+    "#f9c1ce",  # Hermosa Pink
+]

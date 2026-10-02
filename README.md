@@ -121,20 +121,39 @@ is simulated.
 
   ### Example output
 
-  `sequential --color "#1c4286" --steps 8`:
+  All commands below are run from inside `plotting/`; the exact commands
+  that produced every image here are also saved as a runnable script at
+  [`examples/sanzo_wada/commands.sh`](plotting/examples/sanzo_wada/commands.sh)
+  (`cd plotting && bash examples/sanzo_wada/commands.sh` reproduces all four).
 
-  ![sequential example](examples/sanzo_wada/sequential.png)
+  ```bash
+  python3 sanzo_wada_palette.py sequential --color "#1c4286" --steps 8 \
+      --out examples/sanzo_wada/sequential
+  ```
+  ![sequential example](plotting/examples/sanzo_wada/sequential.png)
 
-  `diverging --colors "#cc1236,#00978d" --steps 9`:
+  ```bash
+  python3 sanzo_wada_palette.py diverging --colors "#cc1236,#00978d" --steps 9 \
+      --out examples/sanzo_wada/diverging
+  ```
+  ![diverging example](plotting/examples/sanzo_wada/diverging.png)
 
-  ![diverging example](examples/sanzo_wada/diverging.png)
+  ```bash
+  python3 sanzo_wada_palette.py qualitative --n 5 \
+      --out examples/sanzo_wada/qualitative
+  ```
+  (note the honest deuteranopia/tritanopia warnings this particular pick
+  gets — greedy CIELAB separation under normal vision doesn't guarantee CVD
+  safety; see `cvd-test` above)
 
-  `qualitative --n 5` (note the honest deuteranopia/tritanopia warnings this
-  particular pick gets from `cvd-test` — greedy CIELAB separation under
-  normal vision doesn't guarantee CVD safety):
+  ![qualitative example](plotting/examples/sanzo_wada/qualitative.png)
 
-  ![qualitative example](examples/sanzo_wada/qualitative.png)
+  ```bash
+  python3 sanzo_wada_palette.py demo --from-combination 121 \
+      --out examples/sanzo_wada/demo
+  ```
+  ![demo example](plotting/examples/sanzo_wada/demo.png)
 
-  `demo --from-combination 121`:
-
-  ![demo example](examples/sanzo_wada/demo.png)
+  Each example folder also contains the matching `.pdf`, `_python.txt`
+  (ready-to-paste hex list / colormap), `_latex.tex` (`xcolor`
+  `\definecolor` block), and `.json` that the command itself writes.
