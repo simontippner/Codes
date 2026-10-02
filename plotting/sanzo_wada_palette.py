@@ -38,6 +38,22 @@ Usage:
     # visualize many combinations at once as a browsable grid
     python3 sanzo_wada_palette.py gallery --n-colors 3 --limit 30 --out gallery
 
+    # sequential: one hue, light -> dark (magnitude data, e.g. a heatmap)
+    python3 sanzo_wada_palette.py sequential --color "#1c4286" --steps 8
+
+    # diverging: two hues + a neutral gray midpoint (polarity, e.g. +/- data)
+    python3 sanzo_wada_palette.py diverging --colors "#cc1236,#00978d" --steps 9
+
+    # qualitative: N maximally-separated colors (categorical/identity data)
+    python3 sanzo_wada_palette.py qualitative --n 6
+
+    # test any palette's distinguishability under color vision deficiency
+    python3 sanzo_wada_palette.py cvd-test --from-combination 42
+    python3 sanzo_wada_palette.py cvd-test --colors "#cc1236,#00978d,#e2b540"
+
+    # render example line/scatter/heatmap plots using one combination's colors
+    python3 sanzo_wada_palette.py demo --from-combination 121 --out demo
+
 On first use the script downloads colors.json from GitHub and caches it
 next to this file (sanzo_wada_colors.json); use --refresh to re-download.
 """
@@ -53,6 +69,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from matplotlib.colors import ListedColormap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE_PATH = os.path.join(HERE, "sanzo_wada_colors.json")
@@ -276,6 +293,24 @@ def cmd_gallery(args, colors, combos):
           f"ids: {filtered[0][0]}-{filtered[-1][0]})")
 
 
+def sequential_anchors(hue_hex):
+    """One hue, light -> dark: build a 3-point Lab path (light tint, the
+    hue itself, dark shade) from a single base color, per the standard
+    'sequential = one hue' convention for magnitude data."""
+    L, a, b = rgb01_to_lab(hex_to_rgb01(hue_hex))
+    light = lab_to_rgb01(np.array([95.0, a * 0.12, b * 0.12]))
+    dark = lab_to_rgb01(np.array([22.0, a * 1.05, b * 1.05]))
+    return [rgb01_to_hex(light), hue_hex, rgb01_to_hex(dark)]
+
+
+def diverging_anchors(hex1, hex2, midpoint_hex=None):
+    """Two hues + a neutral gray midpoint, per the standard 'diverging'
+    convention for polarity data (e.g. positive/negative, above/below a
+    reference) -- never a hue at the midpoint."""
+    mid = midpoint_hex or "#f2f2f0"
+    return [hex1, mid, hex2]
+
+
 def render_gradient(anchor_hexes, step_hexes, out_prefix):
     """Top: a smooth, continuous colormap bar (256-step Lab interpolation)
     suitable as a publication colorbar. Bottom: the discrete requested
@@ -330,23 +365,43 @@ def write_gradient_snippets(anchor_hexes, step_hexes, out_prefix):
         json.dump({"anchors": anchor_hexes, "steps": step_hexes}, f, indent=2)
 
 
-def cmd_gradient(args, colors, combos):
+def cmd_sequential(args, colors, combos):
     if args.from_combination:
         if args.from_combination not in combos:
             sys.exit(f"No such combination id: {args.from_combination} (valid range 1-348)")
-        anchor_hexes = [c["hex"] for c in combos[args.from_combination]]
-    elif args.colors:
-        anchor_hexes = [h.strip() for h in args.colors.split(",")]
+        hue_hex = combos[args.from_combination][0]["hex"]
     else:
-        sys.exit("Provide anchor colors via --colors '#hex,#hex,...' or --from-combination <id>")
+        hue_hex = args.color.strip()
 
-    if len(anchor_hexes) < 2:
-        sys.exit("Need at least 2 anchor colors to make a gradient")
-
+    anchor_hexes = sequential_anchors(hue_hex)
     step_hexes, _ = interpolate_lab(anchor_hexes, args.steps)
     render_gradient(anchor_hexes, step_hexes, args.out)
     write_gradient_snippets(anchor_hexes, step_hexes, args.out)
-    print(f"Anchors: {', '.join(anchor_hexes)}")
+    print(f"Sequential ramp from hue {hue_hex} (light -> dark)")
+    print(f"{args.steps} steps: {', '.join(step_hexes)}")
+    print(f"Wrote {args.out}.png, {args.out}.pdf, {args.out}_python.txt, "
+          f"{args.out}_latex.tex, {args.out}.json")
+
+
+def cmd_diverging(args, colors, combos):
+    if args.from_combination:
+        if args.from_combination not in combos:
+            sys.exit(f"No such combination id: {args.from_combination} (valid range 1-348)")
+        members = combos[args.from_combination]
+        if len(members) < 2:
+            sys.exit("That combination has fewer than 2 colors; need 2 poles for diverging")
+        hex1, hex2 = members[0]["hex"], members[-1]["hex"]
+    else:
+        parts = [h.strip() for h in args.colors.split(",")]
+        if len(parts) != 2:
+            sys.exit("--colors must give exactly 2 hex colors (the two poles), e.g. '#aa0000,#0055aa'")
+        hex1, hex2 = parts
+
+    anchor_hexes = diverging_anchors(hex1, hex2, args.midpoint)
+    step_hexes, _ = interpolate_lab(anchor_hexes, args.steps)
+    render_gradient(anchor_hexes, step_hexes, args.out)
+    write_gradient_snippets(anchor_hexes, step_hexes, args.out)
+    print(f"Diverging ramp: {hex1} -> {anchor_hexes[1]} (neutral midpoint) -> {hex2}")
     print(f"{args.steps} steps: {', '.join(step_hexes)}")
     print(f"Wrote {args.out}.png, {args.out}.pdf, {args.out}_python.txt, "
           f"{args.out}_latex.tex, {args.out}.json")
@@ -375,30 +430,58 @@ def min_pairwise_lab_distance(labs):
     return float(d.min())
 
 
-def cmd_distinct(args, colors, combos):
+def print_cvd_diagnostics(hexes):
+    """Print the minimum pairwise CIE76 Delta-E among a set of hex colors,
+    both for normal vision and simulated under each CVD type -- a real
+    numeric distinguishability check, not just a rendered preview."""
+    labs = np.array([rgb01_to_lab(hex_to_rgb01(h)) for h in hexes])
+    print(f"Min pairwise Delta-E (normal vision): {min_pairwise_lab_distance(labs):.1f}"
+          "  (rule of thumb: >10 usually safely distinguishable, >20 very safe)")
+    for kind in ("protanopia", "deuteranopia", "tritanopia"):
+        sim_labs = [rgb01_to_lab(simulate_cvd(hex_to_rgb01(h), kind)) for h in hexes]
+        verdict = ""
+        d = min_pairwise_lab_distance(sim_labs)
+        if d < 10:
+            verdict = "  <-- WARNING: two or more colors likely collide here"
+        print(f"Min pairwise Delta-E under simulated {kind}: {d:.1f}{verdict}")
+
+
+def cmd_qualitative(args, colors, combos):
     if args.n < 2:
         sys.exit("--n must be at least 2")
     if args.n > len(colors):
         sys.exit(f"--n cannot exceed the {len(colors)} available colors")
 
     picked = farthest_point_select(colors, args.n)
-    labs = np.array([c["lab"] for c in picked])
 
     print(f"{args.n} maximally-distinct colors (greedy farthest-point, CIELAB):")
     for c in picked:
         print(f"  {c['hex']}   {c['name']}")
-    print(f"Min pairwise CIE76 Delta-E (normal vision): {min_pairwise_lab_distance(labs):.1f}"
-          "  (as a rule of thumb, >10 is usually safely distinguishable, >20 very safe)")
-
-    for kind in ("protanopia", "deuteranopia", "tritanopia"):
-        sim_labs = [rgb01_to_lab(simulate_cvd(hex_to_rgb01(c["hex"]), kind)) for c in picked]
-        print(f"Min pairwise Delta-E under simulated {kind}: "
-              f"{min_pairwise_lab_distance(sim_labs):.1f}")
+    print_cvd_diagnostics([c["hex"] for c in picked])
 
     render_swatch(picked, args.out, cvd_preview=args.cvd_preview)
     write_snippets(picked, args.out)
     print(f"Wrote {args.out}.png, {args.out}.pdf, {args.out}_python.txt, "
           f"{args.out}_latex.tex, {args.out}.json")
+
+
+def cmd_cvd_test(args, colors, combos):
+    if args.from_combination:
+        if args.from_combination not in combos:
+            sys.exit(f"No such combination id: {args.from_combination} (valid range 1-348)")
+        members = combos[args.from_combination]
+    else:
+        hexes = [h.strip() for h in args.colors.split(",")]
+        members = [{"hex": h, "name": h} for h in hexes]
+
+    if len(members) < 2:
+        sys.exit("Need at least 2 colors to test distinguishability")
+
+    print(f"Testing {len(members)} colors: {', '.join(c['hex'] for c in members)}")
+    print_cvd_diagnostics([c["hex"] for c in members])
+
+    render_swatch(members, args.out, cvd_preview=True)
+    print(f"Wrote {args.out}.png, {args.out}.pdf")
 
 
 def write_snippets(members, out_prefix):
@@ -449,6 +532,88 @@ def cmd_random(args, colors, combos):
               f"{args.out}_latex.tex, {args.out}.json")
 
 
+def _demo_lines(n):
+    rng = np.random.default_rng(42)
+    x = np.linspace(0, 10, 200)
+    return [(x, np.sin(x + i * 0.7) * np.exp(-0.05 * x) + rng.normal(scale=0.03, size=x.shape))
+            for i in range(n)]
+
+
+def _demo_clusters(n, points_per=40):
+    rng = np.random.default_rng(7)
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+    clusters = []
+    for i in range(n):
+        cx, cy = 2.2 * np.cos(angles[i]), 2.2 * np.sin(angles[i])
+        clusters.append((rng.normal(cx, 0.45, points_per), rng.normal(cy, 0.45, points_per)))
+    return clusters
+
+
+def _demo_field():
+    x = np.linspace(-3, 3, 150)
+    y = np.linspace(-3, 3, 150)
+    X, Y = np.meshgrid(x, y)
+    Z = (np.exp(-(X ** 2 + Y ** 2) / 4)
+         + 0.5 * np.exp(-((X - 1.6) ** 2 + (Y - 1.0) ** 2) / 1.5)
+         - 0.4 * np.exp(-((X + 1.6) ** 2 + (Y + 1.2) ** 2) / 2.0))
+    return X, Y, Z
+
+
+def render_demo(hexes, names, label, out_prefix):
+    fig, (ax_line, ax_scatter, ax_heat) = plt.subplots(1, 3, figsize=(13, 4.2))
+
+    for (x, y), h in zip(_demo_lines(len(hexes)), hexes):
+        ax_line.plot(x, y, color=h, lw=1.8)
+    ax_line.set_title("line plot", fontsize=10)
+    ax_line.set_xlabel("x", fontsize=9)
+    ax_line.set_ylabel("y", fontsize=9)
+    ax_line.tick_params(labelsize=8)
+
+    for (xs, ys), h, name in zip(_demo_clusters(len(hexes)), hexes, names):
+        ax_scatter.scatter(xs, ys, color=h, s=18, alpha=0.85, edgecolor="white",
+                            linewidth=0.3, label=name)
+    ax_scatter.set_title("scatter (categories)", fontsize=10)
+    ax_scatter.set_xticks([])
+    ax_scatter.set_yticks([])
+    ax_scatter.legend(fontsize=6, frameon=False, loc="upper right",
+                       handletextpad=0.3, borderaxespad=0.2)
+
+    X, Y, Z = _demo_field()
+    smooth_hexes, smooth_rgb = interpolate_lab(hexes, 256)
+    cmap = ListedColormap(smooth_rgb)
+    im = ax_heat.imshow(Z, cmap=cmap, origin="lower", extent=[-3, 3, -3, 3], aspect="auto")
+    fig.colorbar(im, ax=ax_heat, fraction=0.046, pad=0.04)
+    ax_heat.set_title("heatmap (palette as colormap)", fontsize=10)
+    ax_heat.set_xticks([])
+    ax_heat.set_yticks([])
+
+    fig.suptitle(label, fontsize=10, color="0.3")
+    fig.tight_layout(rect=[0, 0, 1, 0.93])
+    fig.savefig(f"{out_prefix}.png", dpi=300)
+    fig.savefig(f"{out_prefix}.pdf")
+    plt.close(fig)
+
+
+def cmd_demo(args, colors, combos):
+    if args.from_combination:
+        if args.from_combination not in combos:
+            sys.exit(f"No such combination id: {args.from_combination} (valid range 1-348)")
+        members = combos[args.from_combination]
+        hexes = [c["hex"] for c in members]
+        names = [c["name"] for c in members]
+        label = f"Sanzo Wada combination #{args.from_combination}: {', '.join(names)}"
+    else:
+        hexes = [h.strip() for h in args.colors.split(",")]
+        names = hexes
+        label = f"Custom palette: {', '.join(hexes)}"
+
+    if len(hexes) < 2:
+        sys.exit("Need at least 2 colors for the demo plots")
+
+    render_demo(hexes, names, label, args.out)
+    print(f"Wrote {args.out}.png, {args.out}.pdf")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -482,31 +647,57 @@ def main():
                             help="max combinations to include (default 30)")
     p_gallery.add_argument("--out", default="sanzo_wada_gallery", help="output basename")
 
-    p_gradient = sub.add_parser(
-        "gradient", help="build a smooth, perceptually-interpolated gradient/colormap")
-    g_src = p_gradient.add_mutually_exclusive_group(required=True)
-    g_src.add_argument("--colors", help="comma-separated anchor hex colors, e.g. '#112233,#ffee00'")
-    g_src.add_argument("--from-combination", type=int,
-                        help="use an existing combination's colors as the anchors, in order")
-    p_gradient.add_argument("--steps", type=int, default=8,
-                             help="number of discrete steps to also output (default 8)")
-    p_gradient.add_argument("--out", default="sanzo_wada_gradient", help="output basename")
+    p_seq = sub.add_parser(
+        "sequential", help="one hue, light->dark: a magnitude colormap (e.g. for a heatmap)")
+    s_src = p_seq.add_mutually_exclusive_group(required=True)
+    s_src.add_argument("--color", help="base hue, e.g. '#1c4286'")
+    s_src.add_argument("--from-combination", type=int,
+                        help="use an existing combination's first color as the base hue")
+    p_seq.add_argument("--steps", type=int, default=8,
+                        help="number of discrete steps to also output (default 8)")
+    p_seq.add_argument("--out", default="sanzo_wada_sequential", help="output basename")
 
-    p_distinct = sub.add_parser(
-        "distinct", help="pick N maximally-separated colors for a categorical/identity palette")
-    p_distinct.add_argument("--n", type=int, required=True,
-                             help="how many distinct colors to pick")
-    p_distinct.add_argument("--out", default="sanzo_wada_distinct", help="output basename")
-    p_distinct.add_argument("--cvd-preview", action="store_true",
-                             help="add protanopia/deuteranopia/tritanopia preview rows")
+    p_div = sub.add_parser(
+        "diverging", help="two hues + neutral midpoint: a polarity colormap (e.g. +/- data)")
+    d_src = p_div.add_mutually_exclusive_group(required=True)
+    d_src.add_argument("--colors", help="exactly 2 comma-separated hex poles, e.g. '#aa0000,#0055aa'")
+    d_src.add_argument("--from-combination", type=int,
+                        help="use an existing combination's first and last colors as the two poles")
+    p_div.add_argument("--midpoint", help="override the neutral midpoint hex (default a light gray)")
+    p_div.add_argument("--steps", type=int, default=9,
+                        help="number of discrete steps to also output (default 9)")
+    p_div.add_argument("--out", default="sanzo_wada_diverging", help="output basename")
+
+    p_qual = sub.add_parser(
+        "qualitative", help="pick N maximally-separated colors for a categorical/identity palette")
+    p_qual.add_argument("--n", type=int, required=True,
+                         help="how many distinct colors to pick")
+    p_qual.add_argument("--out", default="sanzo_wada_qualitative", help="output basename")
+    p_qual.add_argument("--cvd-preview", action="store_true",
+                         help="add protanopia/deuteranopia/tritanopia preview rows")
+
+    p_cvd = sub.add_parser(
+        "cvd-test", help="test any palette's distinguishability under color vision deficiency")
+    c_src = p_cvd.add_mutually_exclusive_group(required=True)
+    c_src.add_argument("--colors", help="comma-separated hex colors to test")
+    c_src.add_argument("--from-combination", type=int, help="test an existing combination's colors")
+    p_cvd.add_argument("--out", default="sanzo_wada_cvd_test", help="output basename")
+
+    p_demo = sub.add_parser(
+        "demo", help="render example line/scatter/heatmap plots using a palette")
+    de_src = p_demo.add_mutually_exclusive_group(required=True)
+    de_src.add_argument("--from-combination", type=int, help="combination id to use as the palette")
+    de_src.add_argument("--colors", help="comma-separated hex colors to use as the palette")
+    p_demo.add_argument("--out", default="sanzo_wada_demo", help="output basename")
 
     args = p.parse_args()
     colors = fetch_colors(refresh=args.refresh)
     combos = build_combinations(colors)
 
     {"list": cmd_list, "show": cmd_show, "export": cmd_export,
-     "random": cmd_random, "gallery": cmd_gallery, "gradient": cmd_gradient,
-     "distinct": cmd_distinct}[args.command](args, colors, combos)
+     "random": cmd_random, "gallery": cmd_gallery, "sequential": cmd_sequential,
+     "diverging": cmd_diverging, "qualitative": cmd_qualitative,
+     "cvd-test": cmd_cvd_test, "demo": cmd_demo}[args.command](args, colors, combos)
 
 
 if __name__ == "__main__":

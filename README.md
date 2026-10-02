@@ -79,17 +79,62 @@ is simulated.
     — render many combinations at once as a single browsable grid figure
     (one row per combination, labeled by id on the left), for visually
     scanning a filtered set instead of reading hex codes off `list`.
-  - `gradient (--colors '#hex,#hex,...' | --from-combination <id>)
-    [--steps 8] [--out <prefix>]` — build a smooth, perceptually-uniform
-    gradient/colormap by interpolating through 2+ anchor colors in CIELAB
-    space (much smoother than interpolating raw RGB). Renders a continuous
-    256-step colorbar plus the requested number of discrete steps, and
-    writes a ready-to-use `LinearSegmentedColormap` to the Python snippet.
-  - `distinct --n N [--out <prefix>] [--cvd-preview]` — pick N
+
+  Three commands follow the standard data-viz palette taxonomy (the same
+  "job the color does" split used by the `dataviz` skill: sequential for
+  magnitude, diverging for polarity, qualitative/categorical for identity):
+
+  - `sequential (--color '#hex' | --from-combination <id>) [--steps 8]
+    [--out <prefix>]` — one hue, light→dark: a magnitude colormap (e.g. for
+    a heatmap), built by interpolating a single base hue between a near-
+    white tint and a dark shade in CIELAB space (perceptually smoother than
+    interpolating raw RGB).
+  - `diverging (--colors '#hex1,#hex2' | --from-combination <id>)
+    [--midpoint '#hex'] [--steps 9] [--out <prefix>]` — two hues + a
+    neutral gray midpoint: a polarity colormap (e.g. positive/negative, or
+    above/below a reference value). Never puts a hue at the midpoint.
+  - `qualitative --n N [--out <prefix>] [--cvd-preview]` — pick N
     maximally-separated colors out of the full 159-color set via greedy
     farthest-point sampling in CIELAB space, for a categorical/identity
-    palette rather than an aesthetically-coordinated combination. Prints
-    the minimum pairwise CIE76 Delta-E among the picks, both for normal
-    vision and simulated under each CVD type — this is a real diagnostic
-    (it will honestly report a low Delta-E if two picks collide under e.g.
-    deuteranopia), not just a picture to eyeball.
+    palette rather than an aesthetically-coordinated combination.
+
+  Both `sequential`/`diverging` render a continuous 256-step colorbar plus
+  the requested discrete steps, and write a ready-to-use
+  `LinearSegmentedColormap` to the Python snippet.
+
+  - `cvd-test (--colors '#hex,...' | --from-combination <id>) [--out
+    <prefix>]` — test **any** palette's real distinguishability under color
+    vision deficiency: renders the protanopia/deuteranopia/tritanopia
+    preview rows and prints the minimum pairwise CIE76 Delta-E, both for
+    normal vision and under each simulated CVD type. This is a genuine
+    numeric diagnostic, not just a picture to eyeball — it will explicitly
+    warn when two colors are likely to collide (e.g. a red/green pair
+    collapsing under deuteranopia), including for `qualitative` picks,
+    which are CIELAB-separated under *normal* vision but aren't
+    automatically guaranteed to stay separated under every CVD type.
+  - `demo (--from-combination <id> | --colors '#hex,...') [--out <prefix>]`
+    — render example line, scatter, and heatmap plots side by side, all
+    using the same chosen palette (categorical colors for the lines/dots,
+    the palette Lab-interpolated into a continuous colormap for the
+    heatmap) — a quick way to see how a palette actually reads across
+    different plot types before committing to it in a real figure.
+
+  ### Example output
+
+  `sequential --color "#1c4286" --steps 8`:
+
+  ![sequential example](examples/sanzo_wada/sequential.png)
+
+  `diverging --colors "#cc1236,#00978d" --steps 9`:
+
+  ![diverging example](examples/sanzo_wada/diverging.png)
+
+  `qualitative --n 5` (note the honest deuteranopia/tritanopia warnings this
+  particular pick gets from `cvd-test` — greedy CIELAB separation under
+  normal vision doesn't guarantee CVD safety):
+
+  ![qualitative example](examples/sanzo_wada/qualitative.png)
+
+  `demo --from-combination 121`:
+
+  ![demo example](examples/sanzo_wada/demo.png)
