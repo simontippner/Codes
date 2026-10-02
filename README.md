@@ -53,3 +53,25 @@ is simulated.
   live-written `.log` file on the shared filesystem — not the job's
   node-local scratch directory, which usually isn't accessible until the
   job finishes. Usage: `python3 make_trj_xyz.py <job>.log <output>.xyz`.
+
+## plotting/ — figure-making helpers
+
+- **`sanzo_wada_palette.py`** — browse and export color palettes from Sanzo
+  Wada's 1933 *A Dictionary of Colour Combinations* for use in publication
+  figures. Uses the open-sourced digitization of the book (159 named colors,
+  348 curated 2-4 color combinations; MIT-licensed dataset from
+  [mattdesl/dictionary-of-colour-combinations](https://github.com/mattdesl/dictionary-of-colour-combinations),
+  cached locally as `sanzo_wada_colors.json` so the script works offline
+  after the first run). Subcommands:
+  - `list [--n-colors 2|3|4] [--search <name>]` — list/filter the 348 combinations
+  - `show <id>` — print one combination's hex/RGB/name in the terminal
+  - `export <id> --out <prefix> [--cvd-preview]` — render a clean swatch
+    figure (PNG+PDF) plus ready-to-paste code: a Python hex list, a LaTeX
+    `xcolor` `\definecolor` block, and a raw JSON dump. `--cvd-preview` adds
+    protanopia/deuteranopia/tritanopia simulated rows underneath the
+    original swatch as a quick (approximate) accessibility sanity check —
+    these are historical aesthetic combinations, not validated
+    colorblind-safe data-viz palettes, so treat this as a first-pass check,
+    not a substitute for a proper categorical-palette validator.
+  - `random [--n-colors N] [--out <prefix>]` — pick (and optionally export)
+    a random combination, e.g. for picking an accent pairing quickly.
