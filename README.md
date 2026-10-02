@@ -75,3 +75,7 @@ is simulated.
     not a substitute for a proper categorical-palette validator.
   - `random [--n-colors N] [--out <prefix>]` — pick (and optionally export)
     a random combination, e.g. for picking an accent pairing quickly.
+  - `gallery [--n-colors N] [--search <name>] [--limit 30] [--out <prefix>]`
+    — render many combinations at once as a single browsable grid figure
+    (one row per combination, labeled by id on the left), for visually
+    scanning a filtered set instead of reading hex codes off `list`.

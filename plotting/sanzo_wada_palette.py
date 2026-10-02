@@ -35,6 +35,9 @@ Usage:
     # grab a random combination with a given number of colors
     python3 sanzo_wada_palette.py random --n-colors 3
 
+    # visualize many combinations at once as a browsable grid
+    python3 sanzo_wada_palette.py gallery --n-colors 3 --limit 30 --out gallery
+
 On first use the script downloads colors.json from GitHub and caches it
 next to this file (sanzo_wada_colors.json); use --refresh to re-download.
 """
@@ -157,6 +160,53 @@ def render_swatch(members, out_prefix, cvd_preview=False):
     plt.close(fig)
 
 
+def render_gallery(filtered, out_prefix, max_colors):
+    """filtered: list of (combination_id, members), one row per combination."""
+    rows = len(filtered)
+    fig_h = max(0.42 * rows + 0.6, 1.5)
+    fig_w = 1.25 * max_colors + 1.3
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    for row_i, (cid, members) in enumerate(filtered):
+        y = rows - row_i - 1  # first result at the top
+        for i, c in enumerate(members):
+            ax.add_patch(Rectangle((i, y), 1, 0.85, facecolor=hex_to_rgb01(c["hex"]),
+                                    edgecolor="white", linewidth=0.8))
+        ax.text(-0.15, y + 0.425, f"#{cid}", ha="right", va="center",
+                 fontsize=7, color="0.35", family="monospace")
+
+    ax.set_xlim(0, max_colors)
+    ax.set_ylim(0, rows)
+    ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(f"{out_prefix}.png", dpi=300)
+    fig.savefig(f"{out_prefix}.pdf")
+    plt.close(fig)
+
+
+def cmd_gallery(args, colors, combos):
+    ids = sorted(combos)
+    filtered = []
+    for cid in ids:
+        members = combos[cid]
+        if args.n_colors and len(members) != args.n_colors:
+            continue
+        names = [c["name"] for c in members]
+        if args.search and not any(args.search.lower() in n.lower() for n in names):
+            continue
+        filtered.append((cid, members))
+
+    if not filtered:
+        sys.exit("No combinations match the given filters")
+    if args.limit:
+        filtered = filtered[:args.limit]
+
+    max_colors = max(len(m) for _, m in filtered)
+    render_gallery(filtered, args.out, max_colors)
+    print(f"Wrote {args.out}.png, {args.out}.pdf  ({len(filtered)} combinations, "
+          f"ids: {filtered[0][0]}-{filtered[-1][0]})")
+
+
 def write_snippets(members, out_prefix):
     hexes = [c["hex"] for c in members]
     names = [c["name"] for c in members]
@@ -230,12 +280,20 @@ def main():
     p_random.add_argument("--out", help="also export this random pick (basename)")
     p_random.add_argument("--cvd-preview", action="store_true")
 
+    p_gallery = sub.add_parser(
+        "gallery", help="render a grid of many combinations at once for visual browsing")
+    p_gallery.add_argument("--n-colors", type=int, choices=[2, 3, 4])
+    p_gallery.add_argument("--search", help="filter by color name substring")
+    p_gallery.add_argument("--limit", type=int, default=30,
+                            help="max combinations to include (default 30)")
+    p_gallery.add_argument("--out", default="sanzo_wada_gallery", help="output basename")
+
     args = p.parse_args()
     colors = fetch_colors(refresh=args.refresh)
     combos = build_combinations(colors)
 
     {"list": cmd_list, "show": cmd_show, "export": cmd_export,
-     "random": cmd_random}[args.command](args, colors, combos)
+     "random": cmd_random, "gallery": cmd_gallery}[args.command](args, colors, combos)
 
 
 if __name__ == "__main__":
