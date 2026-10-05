@@ -7,6 +7,13 @@ module use /usr/license/modulefiles/
 module load orca6
 export OBIN=`which orca`
 
+# the orca6 modulefile force-enables the InfiniBand (openib) BTL, which has
+# been observed to segfault during MPI_Init on at least one cluster node --
+# a node-level driver fault, not an ORCA/input problem. These are single-node
+# jobs (all ranks communicate via shared memory anyway), so IB is never
+# actually needed; excluding it avoids the crash with no performance cost.
+export OMPI_MCA_btl="^openib"
+
 input=$1
 base=${input%.*}
 
