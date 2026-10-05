@@ -13,7 +13,7 @@ Usage:
 
 Outputs:
     <out>.csv   cycle, energy_Eh, energy_eV, relative_kcal_mol
-    <out>.png / <out>.pdf   energy relative to cycle 0, in kcal/mol, vs cycle
+    <out>.png / <out>.pdf   absolute SCF energy (Eh) vs cycle
 """
 import argparse
 import os
@@ -64,15 +64,15 @@ def main():
             f.write(f"{cycle},{e_eh:.8f},{e_ev:.4f},{rel_kcal:.4f}\n")
 
     cycles = [r[0] for r in rows]
-    rel_kcal = [(r[1] - e0_eh) * EH_TO_KCALMOL for r in rows]
+    energies_eh = [r[1] for r in rows]
     final_eh = rows[-1][1]
 
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.plot(cycles, rel_kcal, color="#1e4e8c", lw=1.5, marker="o", markersize=3)
-    ax.axhline(rel_kcal[-1], color="0.7", lw=0.8, ls=(0, (4, 3)), zorder=0)
+    ax.plot(cycles, energies_eh, color="#1e4e8c", lw=1.5, marker="o", markersize=3)
+    ax.axhline(final_eh, color="0.7", lw=0.8, ls=(0, (4, 3)), zorder=0)
     ax.set_xlabel("Optimization cycle")
-    ax.set_ylabel(f"Energy relative to cycle 0 (kcal/mol)\n"
-                   f"[cycle 0 = {e0_eh:.6f} Eh]", fontsize=9)
+    ax.set_ylabel("SCF energy (Eh)", fontsize=9)
+    ax.ticklabel_format(axis="y", style="plain", useOffset=False)
     ax.set_title(f"{os.path.basename(args.filename)}  "
                   f"(current: {final_eh:.6f} Eh, cycle {cycles[-1]})", fontsize=9)
     fig.tight_layout()
