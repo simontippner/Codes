@@ -50,6 +50,9 @@ workdir=$TMPDIR/orca6/
 mkdir -p $workdir
 cp *.xyz $workdir
 cp $input $workdir
+# Also stage any .gbw present (e.g. for MOREAD / TD-DFT "Restart" jobs that
+# reuse a previously converged wavefunction) -- harmless no-op if none exist.
+cp *.gbw $workdir 2>/dev/null
 ln -sf $workdir SCRATCH
 
 cd $workdir
