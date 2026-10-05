@@ -21,38 +21,53 @@ is simulated.
   appends an entry to an `I_CRASHED` file (timestamp, host, scratch path)
   instead of silently losing the job.
 
-- **`plot_uvvis.py`** — parses the `ABSORPTION SPECTRUM VIA TRANSITION
-  ELECTRIC DIPOLE MOMENTS` table out of an ORCA TD-DFT output/log file
-  (state, energy, wavelength, oscillator strength for each root) and
-  converts the discrete stick transitions into a continuous, Gaussian-
-  broadened UV-vis spectrum using the standard
+All the Python scripts below follow the same convention: `python3
+script.py FILENAME [options]`, where `FILENAME` is the ORCA log/output file
+(or, for `make_combined_xyz.py`, an xyz file) to read — no editing the
+script or hardcoding paths required. Every one also works on a log file
+from a job that's still running, since they only read the shared-filesystem
+`.log` (never the job's node-local scratch directory).
+
+- **`plot_uvvis.py FILENAME [--out <prefix>] [--fwhm 0.4] [--xmin 200]
+  [--xmax 700] [--exp-ref nm nm ...]`** — parses the `ABSORPTION SPECTRUM
+  VIA TRANSITION ELECTRIC DIPOLE MOMENTS` table out of an ORCA TD-DFT
+  output/log file (state, energy, wavelength, oscillator strength for each
+  root) and converts the discrete stick transitions into a continuous,
+  Gaussian-broadened UV-vis spectrum using the standard
   `eps(E) = 1.3062974e8 * sum_i [f_i/FWHM] * exp(-4 ln2 ((E-E_i)/FWHM)^2)`
   convention (same one used by Multiwfn/GaussView-style UV-vis tools).
   Writes the raw transitions and the broadened spectrum to CSV, plus a
-  PNG/PDF plot (broadened curve + stick spectrum overlay, with optional
-  experimental reference wavelengths marked).
-  Usage: `python3 plot_uvvis.py --log <job>.log --out <prefix> [--fwhm 0.4]
-  [--xmin 200] [--xmax 700] [--exp-ref 286 450]`.
+  PNG/PDF plot (broadened curve + stick spectrum overlay). `--out` defaults
+  to the input filename's basename; pass `--exp-ref 286 450` to mark
+  experimental reference wavelengths if you have them (none marked by
+  default).
+  Example: `python3 plot_uvvis.py rubpy3_uvvis.log`
 
-- **`make_combined_xyz.py`** — combines two independently-optimized
-  molecular fragments (each read from its own ORCA-optimized `.xyz`) into
-  a single multi-fragment `.xyz` file, placing the second fragment along
-  +x at a safe, non-clashing center-to-center distance (sum of each
-  fragment's own bounding-sphere radius, plus a configurable gap). Used to
+- **`plot_opt_energy.py FILENAME [--out <prefix>]`** — plots the SCF energy
+  at every cycle of an ORCA geometry optimization (parsed from each `TOTAL
+  SCF ENERGY` block in the log), relative to the first cycle, in kcal/mol
+  vs. cycle number. Useful for spotting real conformational jumps vs. just
+  slow convergence — e.g. a sudden multi-kcal/mol step partway through
+  usually means a genuine structural rearrangement, not numerical noise.
+  Writes a CSV (cycle, energy in Eh/eV, relative kcal/mol) plus a PNG/PDF.
+  Example: `python3 plot_opt_energy.py rubpy_mos_opt.log`
+
+- **`make_trj_xyz.py FILENAME [--out trajectory.xyz]`** — extracts every
+  `CARTESIAN COORDINATES (ANGSTROEM)` block from an ORCA geometry-
+  optimization log file and writes them out as a standard multi-frame xyz
+  trajectory (one frame per optimization cycle), readable directly in VMD
+  or any other xyz-trajectory viewer.
+  Example: `python3 make_trj_xyz.py rubpy_mos_opt.log`
+
+- **`make_combined_xyz.py FRAGMENT1.xyz FRAGMENT2.xyz [--gap 6.0] [--out
+  combined.xyz]`** — combines two independently-optimized molecular
+  fragments into a single multi-fragment `.xyz` file, placing the second
+  fragment along +x at a safe, non-clashing center-to-center distance (sum
+  of each fragment's own bounding-sphere radius, plus `--gap`). Used to
   build a starting geometry for a combined/supramolecular system (e.g. a
   photosensitizer + a catalyst) out of two separately-optimized pieces,
-  ready for a joint geometry optimization. Paths to the two input
-  fragments, the gap distance, and the output path are set as constants at
-  the top of the script.
-
-- **`make_trj_xyz.py`** — extracts every `CARTESIAN COORDINATES (ANGSTROEM)`
-  block from an ORCA geometry-optimization log file and writes them out as a
-  standard multi-frame xyz trajectory (one frame per optimization cycle,
-  readable directly in VMD or any other xyz-trajectory viewer). Works even
-  while the optimization job is still running, since it only needs the
-  live-written `.log` file on the shared filesystem — not the job's
-  node-local scratch directory, which usually isn't accessible until the
-  job finishes. Usage: `python3 make_trj_xyz.py <job>.log <output>.xyz`.
+  ready for a joint geometry optimization.
+  Example: `python3 make_combined_xyz.py rubpy3_opt.xyz mo3s13_opt.xyz --out rubpy_mos.xyz`
 
 ## plotting/ — figure-making helpers
 

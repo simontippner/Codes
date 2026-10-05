@@ -5,8 +5,10 @@ Gaussian-broadened UV-vis absorption spectrum from the computed vertical
 excitation energies and oscillator strengths.
 
 Usage:
-    python3 plot_uvvis.py [--log rubpy3_uvvis.log] [--fwhm 0.4]
-                           [--xmin 200] [--xmax 700] [--out spectrum]
+    python3 plot_uvvis.py FILENAME [--fwhm 0.4] [--xmin 200] [--xmax 700]
+                           [--out spectrum]
+
+    where FILENAME is an ORCA TD-DFT output/log file.
 
 Broadening follows the standard Gaussian-convolution formula used to turn
 discrete TD-DFT oscillator strengths into a continuous molar-absorptivity-like
@@ -25,6 +27,7 @@ Outputs:
     <out>.png          plot: broadened spectrum + stick transitions
 """
 import argparse
+import os
 import re
 import sys
 import numpy as np
@@ -115,22 +118,23 @@ def broaden(transitions, fwhm_ev, xmin_nm, xmax_nm, npoints):
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--log", default="rubpy3_uvvis.log",
-                    help="ORCA TD-DFT output/log file (default: rubpy3_uvvis.log)")
+    p.add_argument("filename", help="ORCA TD-DFT output/log file")
     p.add_argument("--fwhm", type=float, default=0.4,
                     help="Gaussian FWHM in eV (default: 0.4)")
     p.add_argument("--xmin", type=float, default=200.0, help="plot xmin, nm")
     p.add_argument("--xmax", type=float, default=700.0, help="plot xmax, nm")
     p.add_argument("--npoints", type=int, default=2000)
-    p.add_argument("--out", default="rubpy3_uvvis",
-                    help="output basename (default: rubpy3_uvvis)")
-    p.add_argument("--exp-ref", type=float, nargs="*", default=[286.0, 450.0],
+    p.add_argument("--out", default=None,
+                    help="output basename (default: derived from the input filename)")
+    p.add_argument("--exp-ref", type=float, nargs="*", default=[],
                     help="experimental reference wavelengths (nm) to mark, "
-                         "default: 286 450 (bpy pi-pi*, 1MLCT max)")
+                         "e.g. --exp-ref 286 450 (none marked by default)")
     args = p.parse_args()
+    if args.out is None:
+        args.out = re.sub(r"\.(log|out)$", "", os.path.basename(args.filename))
 
-    transitions = parse_transitions(args.log)
-    print(f"Parsed {len(transitions)} transitions from {args.log}")
+    transitions = parse_transitions(args.filename)
+    print(f"Parsed {len(transitions)} transitions from {args.filename}")
 
     with open(f"{args.out}_sticks.csv", "w") as f:
         f.write("state,energy_cm-1,wavelength_nm,fosc\n")
