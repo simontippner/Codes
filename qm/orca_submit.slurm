@@ -53,6 +53,13 @@ cp $input $workdir
 # Also stage any .gbw present (e.g. for MOREAD / TD-DFT "Restart" jobs that
 # reuse a previously converged wavefunction) -- harmless no-op if none exist.
 cp *.gbw $workdir 2>/dev/null
+# Also stage any .pc present (external point-charge files for %pointcharges
+# QM/MM jobs) -- harmless no-op if none exist. Missing this causes a
+# confusing crash ("ORCA finished by error termination in Startup" right
+# after "Reading point charge file") rather than a clear file-not-found
+# message, since the input's own directory has the file but the actual
+# run happens in this separate scratch workdir.
+cp *.pc $workdir 2>/dev/null
 ln -sf $workdir SCRATCH
 
 cd $workdir
