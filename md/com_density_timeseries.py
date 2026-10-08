@@ -187,7 +187,16 @@ def main():
     norm = LogNorm(vmin=1, vmax=global_max)
 
     n_sys = len(all_hs)
-    fig_w, fig_h = 2.6 * args.windows, 3.1 * n_sys
+    # Row height: weasyprint (and most report pipelines) stretch the image to
+    # the page's full content WIDTH, so only the image's ASPECT RATIO (not
+    # its absolute size) controls the rendered height -- a tall aspect ratio
+    # (many rows) can render taller than one page even though it looked fine
+    # at this script's own native resolution, pushing the figure caption
+    # onto a separate page. Cap the row height so height/width stays <=~1.15
+    # once there are more than a few rows, trading a little panel padding
+    # for a figure (+ its caption) that reliably fits one page together.
+    row_h = min(3.1, 2.6 * 1.15 * args.windows / max(n_sys, 1))
+    fig_w, fig_h = 2.6 * args.windows, row_h * n_sys
     fig, axes = plt.subplots(n_sys, args.windows, figsize=(fig_w, fig_h), squeeze=False)
     top_margin_in = 0.85
     fig.subplots_adjust(top=1 - top_margin_in / fig_h, left=0.07, right=0.88,
