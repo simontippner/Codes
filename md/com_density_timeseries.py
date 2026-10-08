@@ -121,9 +121,15 @@ def main():
     norm = LogNorm(vmin=1, vmax=vmax)
 
     n_sys = len(all_hs)
-    fig, axes = plt.subplots(n_sys, args.windows, figsize=(2.6 * args.windows, 3.1 * n_sys),
-                              squeeze=False)
-    fig.subplots_adjust(top=1 - 0.16 / n_sys, left=0.07, right=0.88,
+    fig_w, fig_h = 2.6 * args.windows, 3.1 * n_sys
+    fig, axes = plt.subplots(n_sys, args.windows, figsize=(fig_w, fig_h), squeeze=False)
+    # Reserve a fixed ~0.6in strip at the top for the (possibly 2-line)
+    # suptitle, regardless of how many rows -- a fraction that scales as
+    # 1/n_sys (as if the title always took the same FRACTION of the figure)
+    # leaves almost no room once n_sys is more than 2-3 and the title
+    # collides with the top row's panel titles.
+    top_margin_in = 0.85
+    fig.subplots_adjust(top=1 - top_margin_in / fig_h, left=0.07, right=0.88,
                          wspace=0.08, hspace=0.25)
     im = None
     for row, (hs, label, (frames, win_frames)) in enumerate(zip(all_hs, all_labels, all_frames)):
