@@ -5,6 +5,30 @@ Personal code repository for computational chemistry / data analysis scripts
 
 ## md/ — AMBER/cpptraj trajectory analysis
 
+- **`com_density_single_anchor.py`** — single-colormap solute density
+  heatmap (the plain style, before `com_density_timeseries.py` grew
+  species-coloring), but centered on **one specific body** (e.g. one chosen
+  PS molecule) rather than the solute assembly's collective centroid.
+  `com_density_timeseries.py` deliberately avoids pinning any one body at
+  the origin (diagnosed as a reference-choice artifact when it happened
+  implicitly via cpptraj's `autoimage anchor`); this script does that ON
+  PURPOSE -- no centroid correction afterward, so the chosen anchor body
+  sits fixed at the origin (marked with a star) in every panel by
+  construction. That answers a genuinely different question ("what does
+  the local environment around this one specific molecule look like") from
+  "where does the assembly condense relative to its own center" -- pick
+  the right script for the question being asked. Defaults to short (e.g.
+  0.1 ns) windows for near-instantaneous snapshots rather than long (e.g.
+  40 ns) pooled ones -- note short windows are necessarily sparse (few
+  frames x few bodies), showing up as a speckled rather than smooth
+  density; that's the expected tradeoff for temporal sharpness, not a bug.
+  Usage:
+  ```
+  python3 com_density_single_anchor.py PRMTOP TRAJ \
+      --body-mask ":1-10" --body-mask ":11-20" ... \
+      --anchor-mask ":101" --n-panels 6 --window-ns 0.1 --out out.png
+  ```
+
 - **`com_density_timeseries.py`** — visualizes solute aggregation over an MD
   trajectory as a 2D spatial density heatmap of solute bodies' centers of
   mass, binned into time windows, one or more systems as separate rows (e.g.
