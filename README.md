@@ -5,6 +5,30 @@ Personal code repository for computational chemistry / data analysis scripts
 
 ## md/ — AMBER/cpptraj trajectory analysis
 
+- **`pmf_from_pairdist.py`** — approximate CAT...PS binding free energy
+  (potential of mean force) from an EXISTING unbiased MD trajectory's
+  pairwise center-of-mass distance distribution -- no new simulation
+  needed, just re-analysis of the `com_distances.dat` files this project's
+  aggregation pipeline (`01_generate_cpptraj/gen_mix_cpptraj.py` /
+  `gen_mix10_cpptraj.py`) already writes. For N independent CAT...PS pairs
+  sampled every frame, the expected pair count in a shell under a uniform
+  ("ideal gas") reference is `n_frames * N_pairs * shell_volume / V_box`;
+  the ratio of observed to expected count is g(r) (a body-center-of-mass
+  analogue of a site-site RDF), and PMF(r) = -RT ln[g(r)], shifted so the
+  plateau at large r (dissociated reference state) sits at zero. The depth
+  of the resulting well at the contact-distance minimum is the pairwise
+  association free energy, estimated directly from how often the unbiased
+  trajectory visits close vs. far separations -- legitimate when (as here)
+  the trajectory already samples both bound and unbound configurations,
+  but **not** a substitute for a proper umbrella-sampling/WHAM PMF along a
+  defined reaction coordinate, nor a true single-pair/infinite-dilution
+  binding free energy (this project's many-body 10:10 / 10:1 systems have
+  competing pairs, not one isolated pair). Usage:
+  ```
+  python3 pmf_from_pairdist.py com_distances.dat BOX_VOLUME_A3 \
+      --pair-regex 'd_(CAT\d*)_(RUB\d+)$' --r-max 25 --out-csv pmf.csv
+  ```
+
 - **`com_density_single_anchor.py`** — single-colormap solute density
   heatmap (the plain style, before `com_density_timeseries.py` grew
   species-coloring), but centered on **one specific body** (e.g. one chosen
