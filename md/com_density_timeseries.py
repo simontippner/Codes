@@ -127,9 +127,9 @@ def main():
                      help="AMBER mask for one solute body's COM, tagged with its species; repeat per body")
     ap.add_argument("--field-species", required=True,
                      help="species shown as the colormap density (should have enough bodies for a real density)")
-    ap.add_argument("--mark-species", action="append", required=True,
-                     help="species shown as scatter-marked points; repeat per marked species")
-    ap.add_argument("--mark-color", action="append", required=True,
+    ap.add_argument("--mark-species", action="append", default=[],
+                     help="species shown as scatter-marked points; repeat per marked species (optional)")
+    ap.add_argument("--mark-color", action="append", default=[],
                      help="hex color for the corresponding --mark-species, in the same order")
     ap.add_argument("--cmap", default="viridis")
     ap.add_argument("--anchor-mask", required=True,

@@ -43,6 +43,52 @@ Personal code repository for computational chemistry / data analysis scripts
       --body-mask PS ":101" --body-mask PS ":102" ... \
       --anchor-mask ":1-10" --windows 5 --dt-ps 10 --out out.png
   ```
+  `--mark-species`/`--mark-color` are optional — omit them for a plain
+  single-species density heatmap with no marker overlay.
+
+- **`solvent_density_timeseries.py`** — the solvent-side companion: same
+  time-windowed, centroid-recentered 2D density heatmap, but for solvent
+  molecules (e.g. water/methanol O) instead of solute bodies, to see
+  whether solvent is depleted from the region where solutes condense
+  (classic hydrophobic-collapse signature) or stays uniform. Extracting a
+  per-molecule COM the way the solute script does doesn't scale to
+  thousands of solvent molecules, so instead one cpptraj pass computes the
+  solute centroid (same `vector ... center` calls, used only for
+  recentering, not plotted) **and** strips the trajectory down to just the
+  solvent's representative atom, writing it out as a small NetCDF read
+  directly with `scipy.io.netcdf_file` — far cheaper than thousands of
+  individual `vector` calls. Defaults to a **linear** color scale, not log:
+  solvent density only varies by a modest factor between bulk and a
+  depleted pocket near a solute cluster (not orders of magnitude the way
+  the sparse solute case does), so log washes the contrast out under the
+  huge uniform bulk value. Hit (and fixed) a real cpptraj mask-parser bug
+  along the way: `strip !((:WAT@O)|(:MOH@O1))` throws `Mask::ToRPN:
+  unbalanced parentheses in expression` even though the parens are balanced
+  by any normal count — wrapping `!(...)` around an inner expression that
+  itself has parens around each term breaks the parser; `strip
+  !(:WAT@O|:MOH@O1)` (no inner parens) works. Requires cpptraj and scipy on
+  PATH. Usage:
+  ```
+  python3 solvent_density_timeseries.py \
+      --system "0% water" PRMTOP1 TRAJ1 \
+      --solute-body-mask ":1-10" --solute-body-mask ":11-20" ... \
+      --solvent-mask ":WAT@O" --solvent-mask ":MOH@O1" \
+      --anchor-mask ":1-10" --windows 5 --box-half 27 --out out.png
+  ```
+
+- **`com_3d_snapshots.py`** — the 3D companion: matplotlib has no good
+  volumetric/density rendering, so rather than a pooled 3D density this
+  plots a handful of representative single frames (e.g. early/mid/late)
+  side by side in 3D, colored by species — far more legible than a dense 3D
+  point cloud would be. Same cpptraj COM extraction and centroid-
+  recentering as `com_density_timeseries.py`. Usage:
+  ```
+  python3 com_3d_snapshots.py PRMTOP TRAJ \
+      --body-mask CAT ":1-10" --body-mask CAT ":11-20" ... \
+      --body-mask PS ":101" --body-mask PS ":102" ... \
+      --species-color CAT "#386641" --species-color PS "#7798ab" \
+      --anchor-mask ":1-10" --n-snapshots 4 --out out.png
+  ```
 
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
