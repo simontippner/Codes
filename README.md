@@ -6,24 +6,22 @@ Personal code repository for computational chemistry / data analysis scripts
 ## md/ — AMBER/cpptraj trajectory analysis
 
 - **`com_density_timeseries.py`** — visualizes solute aggregation over an MD
-  trajectory as a 2D spatial density heatmap of multiple solute bodies'
-  centers of mass, binned into time windows, one or more systems as separate
-  rows (e.g. several compositions stacked on the same time-window and color
-  axes). Each body is tagged with a species (`--body-mask SPECIES MASK`) and
-  each species gets its own color (`--species NAME HEXCOLOR`); every pixel's
-  **hue is the local species mix** (a density-weighted blend of each present
-  species' color — pure color = that species dominates locally, a blend =
-  genuinely mixed, not two colors sitting side by side) and its
-  **brightness/alpha is the total density** on a shared log scale (faint/
-  white = little data, vivid = a lot), so composition and magnitude are both
-  readable from one image. The raw per-bin species fraction is salt-and-
-  pepper speckled (individual bodies occupy discrete positions, so any one
-  bin is often dominated by whichever single body happened to land there) —
-  lightly Gaussian-smoothed before blending to reveal the underlying pattern
-  instead of per-bin noise, and saturation-boosted (this project's brand
-  colors are deliberately muted for things like bar charts; a straight blend
-  of two muted colors reads as muddy gray rather than a legible two-color
-  mix).
+  trajectory as a 2D spatial density heatmap of solute bodies' centers of
+  mass, binned into time windows, one or more systems as separate rows (e.g.
+  several compositions stacked on the same time-window and color axes). Each
+  body is tagged with a species (`--body-mask SPECIES MASK`); one species is
+  the **field** (`--field-species NAME`, a standard single-colormap density
+  heatmap with a normal log-scale colorbar) and the other(s) are **marked**
+  (`--mark-species NAME --mark-color HEX`, each body's actual per-frame
+  position plotted directly as scatter points on top). An earlier version
+  tried encoding both species as a single blended hue (density-weighted
+  color mix) — technically correct but hard to read at a glance, since a
+  flat region of one blended tone doesn't obviously parse as "a mix of two
+  things" the way a colormap + distinct marker does. Marking is also the
+  natural choice whenever one species has very few bodies (a single catalyst
+  cluster against ten photosensitizer copies, say): a "density" of one body
+  is a weak concept, whereas marking its actual position is direct and
+  unambiguous.
 
   Extracts each body's per-frame COM via cpptraj (`vector ... center`), then
   **re-centers every body on the solute assembly's own collective centroid
@@ -34,13 +32,13 @@ Personal code repository for computational chemistry / data analysis scripts
   resolve periodic-boundary consistency across bodies) pins that anchor body
   at the origin in every frame by construction — recentering on the group's
   own centroid afterward removes that artifact. Requires cpptraj (AmberTools)
-  and scipy on PATH. Usage (CAT=forest-green / PS=slate-blue, this project's
-  convention):
+  on PATH. Usage (PS density as the field, CAT positions marked — this
+  project's convention):
   ```
   python3 com_density_timeseries.py \
       --system "0% water" PRMTOP1 TRAJ1 \
       --system "100% water" PRMTOP2 TRAJ2 \
-      --species CAT "#386641" --species PS "#7798ab" \
+      --field-species PS --mark-species CAT --mark-color "#386641" \
       --body-mask CAT ":1-10" --body-mask CAT ":11-20" ... \
       --body-mask PS ":101" --body-mask PS ":102" ... \
       --anchor-mask ":1-10" --windows 5 --dt-ps 10 --out out.png
