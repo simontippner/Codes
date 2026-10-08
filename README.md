@@ -8,26 +8,42 @@ Personal code repository for computational chemistry / data analysis scripts
 - **`com_density_timeseries.py`** — visualizes solute aggregation over an MD
   trajectory as a 2D spatial density heatmap of multiple solute bodies'
   centers of mass, binned into time windows, one or more systems as separate
-  rows (e.g. a weakly- vs. strongly-aggregating composition side by side on
-  the same time-window and color axes). Extracts each body's per-frame COM
-  via cpptraj (`vector ... center`), then **re-centers every body on the
-  solute assembly's own collective centroid each frame** before histogramming
-  — important: naively plotting raw (or single-body-anchored) COM positions
-  conflates "where is the assembly relative to one arbitrarily pinned
-  reference body" with genuine spread/condensation, since cpptraj's
-  `autoimage anchor <mask> origin` (needed to resolve periodic-boundary
-  consistency across bodies) pins that anchor body at the origin in every
-  frame by construction — recentering on the group's own centroid afterward
-  removes that artifact. Log-scale shared color axis across all panels/rows
-  (linear scales saturate badly here: bin counts commonly span 1-650+ between
-  the diffuse tails and a condensed cluster's core). Requires cpptraj
-  (AmberTools) on PATH. Usage:
+  rows (e.g. several compositions stacked on the same time-window and color
+  axes). Each body is tagged with a species (`--body-mask SPECIES MASK`) and
+  each species gets its own color (`--species NAME HEXCOLOR`); every pixel's
+  **hue is the local species mix** (a density-weighted blend of each present
+  species' color — pure color = that species dominates locally, a blend =
+  genuinely mixed, not two colors sitting side by side) and its
+  **brightness/alpha is the total density** on a shared log scale (faint/
+  white = little data, vivid = a lot), so composition and magnitude are both
+  readable from one image. The raw per-bin species fraction is salt-and-
+  pepper speckled (individual bodies occupy discrete positions, so any one
+  bin is often dominated by whichever single body happened to land there) —
+  lightly Gaussian-smoothed before blending to reveal the underlying pattern
+  instead of per-bin noise, and saturation-boosted (this project's brand
+  colors are deliberately muted for things like bar charts; a straight blend
+  of two muted colors reads as muddy gray rather than a legible two-color
+  mix).
+
+  Extracts each body's per-frame COM via cpptraj (`vector ... center`), then
+  **re-centers every body on the solute assembly's own collective centroid
+  each frame** before histogramming — important: naively plotting raw (or
+  single-body-anchored) COM positions conflates "where is the assembly
+  relative to one arbitrarily pinned reference body" with genuine spread/
+  condensation, since cpptraj's `autoimage anchor <mask> origin` (needed to
+  resolve periodic-boundary consistency across bodies) pins that anchor body
+  at the origin in every frame by construction — recentering on the group's
+  own centroid afterward removes that artifact. Requires cpptraj (AmberTools)
+  and scipy on PATH. Usage (CAT=forest-green / PS=slate-blue, this project's
+  convention):
   ```
   python3 com_density_timeseries.py \
       --system "0% water" PRMTOP1 TRAJ1 \
       --system "100% water" PRMTOP2 TRAJ2 \
-      --body-mask ":1-10" --body-mask ":11-20" ... \
-      --anchor-mask ":1-10" --windows 6 --dt-ps 10 --out out.png
+      --species CAT "#386641" --species PS "#7798ab" \
+      --body-mask CAT ":1-10" --body-mask CAT ":11-20" ... \
+      --body-mask PS ":101" --body-mask PS ":102" ... \
+      --anchor-mask ":1-10" --windows 5 --dt-ps 10 --out out.png
   ```
 
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
