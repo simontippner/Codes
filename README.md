@@ -92,7 +92,11 @@ Personal code repository for computational chemistry / data analysis scripts
       --anchor-mask ":1-10" --windows 5 --dt-ps 10 --out out.png
   ```
   `--mark-species`/`--mark-color` are optional — omit them for a plain
-  single-species density heatmap with no marker overlay.
+  single-species density heatmap with no marker overlay. (Fixed bug: the
+  marker legend was built unconditionally with `ncol=len(mark_species)`,
+  which crashes `numpy.array_split` when that's 0 — i.e. exactly the
+  omitted-marker case the option is meant to support. Guarded on
+  `legend_handles` being non-empty.)
 
 - **`solvent_density_timeseries.py`** — the solvent-side companion: same
   time-windowed, centroid-recentered 2D density heatmap, but for solvent
