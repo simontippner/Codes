@@ -214,8 +214,9 @@ def main():
                               markerfacecolor=mark_colors[sp], markeredgecolor="white",
                               markeredgewidth=0.4, label=f"{sp} position")
                        for sp in args.mark_species]
-    fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.995, 0.995),
-               ncol=len(args.mark_species), fontsize=10, frameon=False)
+    if legend_handles:
+        fig.legend(handles=legend_handles, loc="upper right", bbox_to_anchor=(0.995, 0.995),
+                   ncol=len(args.mark_species), fontsize=10, frameon=False)
 
     fig.suptitle(args.title, fontsize=13, x=0.44)
     fig.savefig(args.out, dpi=160)
