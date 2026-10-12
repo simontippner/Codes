@@ -255,6 +255,37 @@ def write_submit_array(outdir, n_frames, nprocs, concurrency, tag):
     return path
 
 
+SANDER_ARRAY_TEMPLATE = """#!/bin/bash
+#SBATCH -J qmmmS_{tag}
+#SBATCH -p compute
+#SBATCH -N 1
+#SBATCH --ntasks-per-node=1
+#SBATCH --array=1-{n_frames}%{concurrency}
+#SBATCH --output=FRAMES/%a/slurm-%A_%a.out
+#SBATCH --error=FRAMES/%a/slurm-%A_%a.err
+
+cd "FRAMES/$SLURM_ARRAY_TASK_ID"
+bash {run_sander_orca}
+"""
+
+
+def write_submit_sander_array(outdir, n_frames, concurrency, tag):
+    """SLURM array for the sander+ORCA-EXTERN path (qmmm.in/orc_job.tpl),
+    one array task per frame via Codes/qm/run_sander_orca.sh. Submit a
+    subset with `sbatch --array=1-K%C submit_sander_array.slurm` (SLURM CLI
+    flags override the file's own #SBATCH directives) to test before
+    committing the full array.
+    """
+    path = os.path.join(outdir, "submit_sander_array.slurm")
+    run_sander_orca = os.path.join(HERE, "run_sander_orca.sh")
+    with open(path, "w") as f:
+        f.write(SANDER_ARRAY_TEMPLATE.format(
+            tag=tag, n_frames=n_frames, concurrency=concurrency,
+            run_sander_orca=run_sander_orca))
+    os.chmod(path, 0o755)
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -298,7 +329,10 @@ def main():
             print(f"=== {label}: --sander-only, found {n_frames_here} existing FRAMES/<i>/ ===")
             write_sander_inputs(framesdir, prmtop, n_frames_here, args.qm_resmask,
                                  args.qm_charge, args.qm_mult, args.maxcore)
+            tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
+            sarray_path = write_submit_sander_array(outdir, n_frames_here, args.concurrency, tag)
             print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {n_frames_here} frame dirs")
+            print(f"  wrote {sarray_path} (NOT submitted)")
             continue
 
         n_total = n_frames_in_traj(prmtop, traj)
@@ -346,12 +380,13 @@ def main():
                 write_inp(framedir, label, args.qm_mask, args.qm_charge, args.qm_mult,
                           args.nprocs, args.maxcore)
 
+        tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
         if args.qm_resmask:
             write_sander_inputs(framesdir, prmtop, len(frame_indices), args.qm_resmask,
                                  args.qm_charge, args.qm_mult, args.maxcore)
+            sarray_path = write_submit_sander_array(outdir, len(frame_indices), args.concurrency, tag)
             print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {len(frame_indices)} frame dirs")
-
-        tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
+            print(f"  wrote {sarray_path} (NOT submitted)")
         array_path = write_submit_array(outdir, len(frame_indices), args.nprocs,
                                          args.concurrency, tag=tag)
         print(f"  wrote {array_path} (NOT submitted -- sbatch it yourself when ready)")
