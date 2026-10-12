@@ -232,6 +232,51 @@ from a job that's still running, since they only read the shared-filesystem
   ready for a joint geometry optimization.
   Example: `python3 make_combined_xyz.py rubpy3_opt.xyz mo3s13_opt.xyz --out rubpy_mos.xyz`
 
+- **`make_qmmm_frame.py PRMTOP TRAJ FRAME --qm-mask MASK --out-prefix
+  PREFIX [--shell 18.0] [--anchor-mask] [--fixed-mask]`** — electrostatic-
+  embedding QM/MM frame extraction from an existing AMBER MD trajectory:
+  autoimages/recenters on the QM region, truncates the rest to a finite MM
+  shell (default 18 Å — ORCA has no PBC, so the whole periodic box can't be
+  embedded), then writes the QM-region atoms as a plain `.xyz` and every
+  kept MM atom's real `system.prmtop` charge + coordinate as an ORCA
+  point-charge `.pc` file. No link-atom support — only for a QM region with
+  nothing covalently bonded across the boundary (a non-covalent donor...
+  acceptor pair in explicit solvent, e.g.). Use a `^`-prefixed (molecule
+  number) `--qm-mask` when the QM region is one or more whole AMBER
+  "molecules" with multi-residue internal topology (e.g. a metal cluster
+  split into several residues) — a `:`-residue mask would only grab one
+  sub-residue. See `Luca/05_qmmm_ensemble/qmmm_ensemble_workflow.pdf` for
+  the full design rationale.
+  Example: `python3 make_qmmm_frame.py system.prmtop 04_prod.nc 4990
+  --qm-mask "^1,2" --out-prefix frame499`
+
+- **`setup_qmmm_ensemble.py --system LABEL PRMTOP TRAJ [--system ...]
+  --qm-mask MASK [--shell 18.0] [--qm-charge 0] [--qm-mult 1] [--n-frames
+  2000] [--nprocs 16] [--out-dir QM_ensemble_SPE] [--workers 16]`** —
+  batch-builds a whole point-charge QM/MM snapshot ensemble on top of
+  `make_qmmm_frame.py`: picks `--n-frames` equally-spaced frames across
+  each `--system`'s full trajectory, extracts each one in parallel
+  (`ProcessPoolExecutor`, `--workers` processes — cheap/CPU-only, no GPU or
+  cluster submission needed for this step), and writes a ready-to-run ORCA
+  ground-state single-point input per frame (B3LYP-D3(BJ)/def2-TZVP/
+  RIJCOSX/def2-J, same level as the rest of `04_uvvis` but WITHOUT CPCM —
+  the MM point charges already supply the solvent electrostatics, so
+  adding a continuum model would double-count it). Lays frames out as
+  `<out-dir>/FRAMES/<i>/{frame_qm.xyz,frame_mm.pc,frame.inp}` (1-based,
+  sequential `i`, independent of the original trajectory frame number —
+  see that system's `manifest.txt` for the `i -> original frame` mapping
+  and the exact mask/charge/method used) under each system's own `MD/`
+  directory. Also writes (but does NOT submit) a `submit_array.slurm`
+  SLURM array covering all extracted frames, reusing `orca_submit.slurm`
+  unmodified per array task — `sbatch` it yourself once ready; this script
+  only ever touches the filesystem, never the queue. Run the RMSD
+  autocorrelation of the system first (see
+  `Luca/05_qmmm_ensemble/decorrelation/`) to know how many of `--n-frames`
+  are actually statistically independent — equal spacing alone does not
+  guarantee that.
+  Example: `python3 setup_qmmm_ensemble.py --system "0% water, buf=exp"
+  system.prmtop 04_prod.nc --qm-mask "^1,2" --n-frames 2000`
+
 ## plotting/ — figure-making helpers
 
 - **`sanzo_wada_palette.py`** — browse and export color palettes from Sanzo
