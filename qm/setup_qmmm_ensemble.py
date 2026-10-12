@@ -202,32 +202,46 @@ end
 """
 
 
-def write_sander_inputs(framesdir, prmtop, n_frames, qm_resmask, charge, mult, maxcore):
-    """Write the shared sander qmmm.in + ORCA orc_job.tpl (same content for
-    every frame of one --system) once at the FRAMES/ level, then symlink
-    them -- plus the system topology -- into every FRAMES/<i>/ so each
-    frame folder is self-contained for `sander -p system.prmtop -c
-    snapshot.ncrst -i qmmm.in` without duplicating the (several-MB)
-    topology file N times.
-    """
-    qmmm_in = os.path.join(framesdir, "qmmm.in")
-    with open(qmmm_in, "w") as f:
-        f.write(QMMM_IN_TEMPLATE.format(qm_resmask=qm_resmask, charge=charge, mult=mult))
+def write_sander_inputs(framesdir, prmtop, n_frames, regions, maxcore):
+    """Write the shared sander qmmm_<tag>.in (one per region: complex,
+    and optionally cat-alone/ps-alone for an interaction-energy decomposition,
+    dE_int = E(complex) - E(cat) - E(ps), same embedding for all three)
+    + ORCA orc_job.tpl (same
+    method for every region, so one shared file) once at the FRAMES/
+    level, then symlink them -- plus the system topology -- into every
+    FRAMES/<i>/ so each frame folder is self-contained for `sander -p
+    system.prmtop -c snapshot.ncrst -i qmmm_<tag>.in` without duplicating
+    the (several-MB) topology file N times.
 
+    regions: list of dicts {tag, resmask, charge, mult}. The "complex"
+    tag additionally gets a bare "qmmm.in" alias symlink for backward
+    compatibility with earlier single-region frame folders/jobs.
+    """
     orc_tpl = os.path.join(framesdir, "orc_job.tpl")
     with open(orc_tpl, "w") as f:
         f.write(ORC_TPL_TEMPLATE.format(method=ORCA_METHOD, maxcore=maxcore))
 
+    region_files = {}
+    for r in regions:
+        path = os.path.join(framesdir, f"qmmm_{r['tag']}.in")
+        with open(path, "w") as f:
+            f.write(QMMM_IN_TEMPLATE.format(qm_resmask=r["resmask"], charge=r["charge"], mult=r["mult"]))
+        region_files[r["tag"]] = path
+
     prmtop_abs = os.path.abspath(prmtop)
     for i in range(1, n_frames + 1):
         framedir = os.path.join(framesdir, str(i))
-        for name, target in (("qmmm.in", qmmm_in), ("orc_job.tpl", orc_tpl),
-                              ("system.prmtop", prmtop_abs)):
+        links = [("orc_job.tpl", orc_tpl), ("system.prmtop", prmtop_abs)]
+        for tag, path in region_files.items():
+            links.append((f"qmmm_{tag}.in", path))
+        if "complex" in region_files:
+            links.append(("qmmm.in", region_files["complex"]))  # backward-compat alias
+        for name, target in links:
             link = os.path.join(framedir, name)
             if os.path.islink(link) or os.path.exists(link):
                 os.remove(link)
             os.symlink(os.path.abspath(target), link)
-    return qmmm_in, orc_tpl
+    return orc_tpl, region_files
 
 
 SLURM_ARRAY_TEMPLATE = """#!/bin/bash
@@ -256,31 +270,31 @@ def write_submit_array(outdir, n_frames, nprocs, concurrency, tag):
 
 
 SANDER_ARRAY_TEMPLATE = """#!/bin/bash
-#SBATCH -J qmmmS_{tag}
+#SBATCH -J qmmmS_{tag}_{region}
 #SBATCH -p compute
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --array=1-{n_frames}%{concurrency}
-#SBATCH --output=FRAMES/%a/slurm-%A_%a.out
-#SBATCH --error=FRAMES/%a/slurm-%A_%a.err
+#SBATCH --output=FRAMES/%a/slurm-{region}-%A_%a.out
+#SBATCH --error=FRAMES/%a/slurm-{region}-%A_%a.err
 
 cd "FRAMES/$SLURM_ARRAY_TASK_ID"
-bash {run_sander_orca}
+bash {run_sander_orca} {region}
 """
 
 
-def write_submit_sander_array(outdir, n_frames, concurrency, tag):
-    """SLURM array for the sander+ORCA-EXTERN path (qmmm.in/orc_job.tpl),
-    one array task per frame via Codes/qm/run_sander_orca.sh. Submit a
-    subset with `sbatch --array=1-K%C submit_sander_array.slurm` (SLURM CLI
-    flags override the file's own #SBATCH directives) to test before
-    committing the full array.
+def write_submit_sander_array(outdir, n_frames, concurrency, tag, region):
+    """SLURM array for one region (complex/cat/ps) of the sander+ORCA-EXTERN
+    path, one array task per frame via Codes/qm/run_sander_orca.sh <region>.
+    Submit a subset with `sbatch --array=1-K%C submit_sander_array_<region>.slurm`
+    (SLURM CLI flags override the file's own #SBATCH directives) to test
+    before committing the full array.
     """
-    path = os.path.join(outdir, "submit_sander_array.slurm")
+    path = os.path.join(outdir, f"submit_sander_array_{region}.slurm")
     run_sander_orca = os.path.join(HERE, "run_sander_orca.sh")
     with open(path, "w") as f:
         f.write(SANDER_ARRAY_TEMPLATE.format(
-            tag=tag, n_frames=n_frames, concurrency=concurrency,
+            tag=tag, region=region, n_frames=n_frames, concurrency=concurrency,
             run_sander_orca=run_sander_orca))
     os.chmod(path, 0o755)
     return path
@@ -296,7 +310,19 @@ def main():
     ap.add_argument("--qm-resmask", default=None,
                      help="standard AMBER residue mask for sander's &qmmm qmmask/noshakemask "
                           "(sander does not understand '^' molecule masks) -- required to write "
-                          "qmmm.in/orc_job.tpl, e.g. \":1-11\"")
+                          "qmmm.in/orc_job.tpl, e.g. \":1-11\". This is the COMPLEX (CAT+PS) region.")
+    ap.add_argument("--cat-resmask", default=None,
+                     help="standard AMBER residue mask for the CAT-alone region (interaction-energy "
+                          "decomposition), e.g. \":1-10\" -- PS becomes classical/MM in this region's "
+                          "qmmm_cat.in. Requires --qm-resmask; --cat-charge/--cat-mult to match.")
+    ap.add_argument("--cat-charge", type=int, default=-2)
+    ap.add_argument("--cat-mult", type=int, default=1)
+    ap.add_argument("--ps-resmask", default=None,
+                     help="standard AMBER residue mask for the PS-alone region, e.g. \":11\" -- CAT "
+                          "becomes classical/MM in this region's qmmm_ps.in. Requires --qm-resmask; "
+                          "--ps-charge/--ps-mult to match.")
+    ap.add_argument("--ps-charge", type=int, default=2)
+    ap.add_argument("--ps-mult", type=int, default=1)
     ap.add_argument("--shell", type=float, default=18.0)
     ap.add_argument("--qm-charge", type=int, default=0)
     ap.add_argument("--qm-mult", type=int, default=1)
@@ -317,6 +343,19 @@ def main():
     if args.qm_resmask is None and args.sander_only:
         ap.error("--sander-only requires --qm-resmask")
 
+    def build_regions():
+        regions = []
+        if args.qm_resmask:
+            regions.append({"tag": "complex", "resmask": args.qm_resmask,
+                             "charge": args.qm_charge, "mult": args.qm_mult})
+        if args.cat_resmask:
+            regions.append({"tag": "cat", "resmask": args.cat_resmask,
+                             "charge": args.cat_charge, "mult": args.cat_mult})
+        if args.ps_resmask:
+            regions.append({"tag": "ps", "resmask": args.ps_resmask,
+                             "charge": args.ps_charge, "mult": args.ps_mult})
+        return regions
+
     for label, prmtop, traj in args.system:
         mddir = os.path.dirname(prmtop)
         outdir = os.path.join(mddir, args.out_dir)
@@ -326,13 +365,16 @@ def main():
         if args.sander_only:
             existing = [int(d) for d in os.listdir(framesdir) if d.isdigit()]
             n_frames_here = max(existing) if existing else 0
-            print(f"=== {label}: --sander-only, found {n_frames_here} existing FRAMES/<i>/ ===")
-            write_sander_inputs(framesdir, prmtop, n_frames_here, args.qm_resmask,
-                                 args.qm_charge, args.qm_mult, args.maxcore)
+            regions = build_regions()
+            print(f"=== {label}: --sander-only, found {n_frames_here} existing FRAMES/<i>/, "
+                  f"regions={[r['tag'] for r in regions]} ===")
+            write_sander_inputs(framesdir, prmtop, n_frames_here, regions, args.maxcore)
             tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
-            sarray_path = write_submit_sander_array(outdir, n_frames_here, args.concurrency, tag)
-            print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {n_frames_here} frame dirs")
-            print(f"  wrote {sarray_path} (NOT submitted)")
+            for r in regions:
+                sarray_path = write_submit_sander_array(outdir, n_frames_here, args.concurrency,
+                                                          tag, r["tag"])
+                print(f"  wrote {sarray_path} (NOT submitted)")
+            print(f"  wrote orc_job.tpl + qmmm_<region>.in, symlinked into all {n_frames_here} frame dirs")
             continue
 
         n_total = n_frames_in_traj(prmtop, traj)
@@ -381,12 +423,15 @@ def main():
                           args.nprocs, args.maxcore)
 
         tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
-        if args.qm_resmask:
-            write_sander_inputs(framesdir, prmtop, len(frame_indices), args.qm_resmask,
-                                 args.qm_charge, args.qm_mult, args.maxcore)
-            sarray_path = write_submit_sander_array(outdir, len(frame_indices), args.concurrency, tag)
-            print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {len(frame_indices)} frame dirs")
-            print(f"  wrote {sarray_path} (NOT submitted)")
+        regions = build_regions()
+        if regions:
+            write_sander_inputs(framesdir, prmtop, len(frame_indices), regions, args.maxcore)
+            for r in regions:
+                sarray_path = write_submit_sander_array(outdir, len(frame_indices), args.concurrency,
+                                                          tag, r["tag"])
+                print(f"  wrote {sarray_path} (NOT submitted)")
+            print(f"  wrote orc_job.tpl + qmmm_<region>.in ({[r['tag'] for r in regions]}), "
+                  f"symlinked into all {len(frame_indices)} frame dirs")
         array_path = write_submit_array(outdir, len(frame_indices), args.nprocs,
                                          args.concurrency, tag=tag)
         print(f"  wrote {array_path} (NOT submitted -- sbatch it yourself when ready)")

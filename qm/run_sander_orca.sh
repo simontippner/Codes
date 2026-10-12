@@ -1,19 +1,28 @@
 #!/bin/bash
 # Run one sander+ORCA-EXTERN QM/MM single point, inside a FRAMES/<i>/
 # folder written by setup_qmmm_ensemble.py (needs system.prmtop,
-# snapshot.ncrst, qmmm.in, orc_job.tpl present -- all but snapshot.ncrst
-# are symlinks shared across the whole ensemble).
+# snapshot.ncrst, qmmm_<region>.in, orc_job.tpl present -- all but
+# snapshot.ncrst are symlinks shared across the whole ensemble).
 #
-# Submitted as a SLURM array task (see the submit_sander_array.slurm that
-# setup_qmmm_ensemble.py writes next to each system's FRAMES/) that cd's
-# into FRAMES/$SLURM_ARRAY_TASK_ID first, so $PWD here is one frame's own
-# directory.
+# Usage: run_sander_orca.sh [REGION]   (default: complex)
+#   REGION selects qmmm_<REGION>.in as sander's -i input, and names the
+#   output NAME={REGION}.out/.rst/.nc so the three regions of an
+#   interaction-energy decomposition (complex/cat/ps: dE_int = E(complex) -
+#   E(cat) - E(ps), same embedding) never clobber each other's output
+#   inside the same frame folder.
+#
+# Submitted as a SLURM array task (see the submit_sander_array_<region>.slurm
+# that setup_qmmm_ensemble.py writes next to each system's FRAMES/) that
+# cd's into FRAMES/$SLURM_ARRAY_TASK_ID first, so $PWD here is one frame's
+# own directory.
 #
 # ORCA path is hardcoded (not `module load orca6`) for the same reason as
 # Codes/qm/orca_submit.slurm: at least one cluster node has been observed
 # to be missing the environment-modules installation entirely, which
 # silently leaves `orca` off PATH.
 set -uo pipefail
+
+REGION="${1:-complex}"
 
 MPILOC=/usr/remote/mpi/gnu/openmpi-4.1.8
 ORCADIR=/usr/license/orca6/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2
@@ -34,22 +43,29 @@ if ! command -v sander > /dev/null; then
   exit 1
 fi
 
-echo "Entering job in $(pwd) on $HOSTNAME"
+echo "Entering job in $(pwd) on $HOSTNAME, region=$REGION"
 date
 
 TOP=system.prmtop
 RST=snapshot.ncrst
-NAME=qmmm
+INPUT="qmmm_${REGION}.in"
+NAME="${REGION}"
+
+if [ ! -f "$INPUT" ]; then
+  echo "FATAL: $INPUT not found in $(pwd)" >&2
+  echo "$(pwd) : $INPUT not found ($(date))" >> I_CRASHED
+  exit 1
+fi
 
 export TMPDIR=/public/$(hostname -s)/scratch/tmp/$LOGNAME.$$
 mkdir -p "$TMPDIR"
-workdir="$TMPDIR/sander_orca/"
+workdir="$TMPDIR/sander_orca_${REGION}/"
 mkdir -p "$workdir"
-ln -sf "$workdir" SCRATCH
-cp "$TOP" "$RST" qmmm.in orc_job.tpl "$workdir"
+ln -sf "$workdir" "SCRATCH_${REGION}"
+cp "$TOP" "$RST" "$INPUT" orc_job.tpl "$workdir"
 cd "$workdir"
 
-sander -O -i qmmm.in -o "$NAME.out" -p "$TOP" -c "$RST" -r "$NAME.rst" -x "$NAME.nc"
+sander -O -i "$INPUT" -o "$NAME.out" -p "$TOP" -c "$RST" -r "$NAME.rst" -x "$NAME.nc"
 status=$?
 
 cd - > /dev/null
