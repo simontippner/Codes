@@ -37,10 +37,18 @@ include (repeat for multiple solvents -- all pooled into one density).
 imaging consistently each frame (passed to cpptraj `autoimage anchor ...
 origin`) -- does NOT bias the plotted density, since density is recentered
 on the solute centroid afterward.
+
+The solute-body COM vectors (com.dat) and the cpptraj input that produced
+them are saved for each system into <that system's MD dir>/analysis/
+density_vectors/ (named after --out's basename) -- not just a throwaway
+tempdir. The large stripped solvent trajectory itself is NOT kept (deleted
+after use); it's fully regenerable from the saved cpptraj input run against
+the original production trajectory.
 """
 import argparse
 import subprocess
 import tempfile
+import shutil
 import os
 import numpy as np
 import scipy.io
@@ -50,7 +58,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm, Normalize
 
 
-def extract(prmtop, traj, body_masks, solvent_masks, anchor_mask, workdir):
+def extract(prmtop, traj, body_masks, solvent_masks, anchor_mask, workdir, save_tag):
     com_out = os.path.join(workdir, "com.dat")
     nc_out = os.path.join(workdir, "solvent.nc")
     # NOT (:WAT@O|:MOH@O1) -- NOT (:WAT@O)|(:MOH@O1): cpptraj's strip mask
@@ -62,20 +70,41 @@ def extract(prmtop, traj, body_masks, solvent_masks, anchor_mask, workdir):
     # parser bug as the comma/distance-operator ones found earlier in this
     # project (see make_qmmm_frame.py).
     solvent_expr = "|".join(solvent_masks)
+    # Bare relative filenames in the script + cwd=workdir below (not the
+    # full tempdir path baked in) so the .in file saved further down is
+    # directly re-runnable as-is from wherever it's saved, rather than
+    # pointing at a tempdir that no longer exists once this script finishes.
     lines = [f"parm {prmtop}", f"trajin {traj}", f"autoimage anchor {anchor_mask} origin"]
     for i, mask in enumerate(body_masks):
-        lines.append(f"vector B{i} {mask} out {com_out} center")
+        lines.append(f"vector B{i} {mask} out com.dat center")
     lines.append(f"strip !({solvent_expr})")
-    lines.append(f"trajout {nc_out} netcdf")
+    lines.append("trajout solvent.nc netcdf")
     lines.append("run")
     script = os.path.join(workdir, "extract.in")
     with open(script, "w") as f:
         f.write("\n".join(lines) + "\n")
-    result = subprocess.run(["cpptraj", "-i", script], capture_output=True, text=True)
+    result = subprocess.run(["cpptraj", "-i", script], capture_output=True, text=True, cwd=workdir)
     if result.returncode != 0 or not os.path.exists(nc_out):
         print(result.stdout)
         print(result.stderr)
         raise RuntimeError(f"cpptraj solvent extraction failed for {traj}")
+
+    # Persist the solute-body COM vectors (the actual "vector" data, used
+    # for recentering) + the cpptraj input that produced them into THIS
+    # system's own MD/analysis/ folder -- same convention and rationale as
+    # com_density_timeseries.py's extract_com(). The large stripped solvent
+    # trajectory (nc_out) is deliberately NOT kept here (it's deleted right
+    # after use, below): it's fully regenerable from this same saved input
+    # file run against the original 04_prod.nc, and persisting it for every
+    # solvent/ion density run would multiply this project's disk usage by
+    # the number of such runs for no reproducibility benefit the saved
+    # input file doesn't already provide.
+    mddir = os.path.dirname(prmtop)
+    save_dir = os.path.join(mddir, "analysis", "density_vectors")
+    os.makedirs(save_dir, exist_ok=True)
+    shutil.copy(com_out, os.path.join(save_dir, f"{save_tag}.dat"))
+    shutil.copy(script, os.path.join(save_dir, f"{save_tag}.in"))
+
     return com_out, nc_out
 
 
@@ -130,11 +159,12 @@ def main():
     args = ap.parse_args()
 
     n_bodies = len(args.solute_body_mask)
+    save_tag = os.path.splitext(os.path.basename(args.out))[0]
     all_windows, all_labels, all_frames = [], [], []
     with tempfile.TemporaryDirectory() as workdir:
         for label, prmtop, traj in args.system:
             com_out, nc_out = extract(prmtop, traj, args.solute_body_mask, args.solvent_mask,
-                                       args.anchor_mask, workdir)
+                                       args.anchor_mask, workdir, save_tag)
             frames, centroid = load_centroid(com_out, n_bodies)
             solvent_xyz = load_solvent(nc_out)
             hs, win_ranges = window_hist(frames, solvent_xyz, centroid, args.windows, args.box_half, args.bins)

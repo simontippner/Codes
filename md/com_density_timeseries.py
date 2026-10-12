@@ -49,10 +49,17 @@ imaging consistently across all bodies each frame (passed to cpptraj
 every body's position is re-centered on the collective centroid afterward.
 --dt-ps: trajectory save interval, for converting frame number to ns in
 panel titles (default 10 ps/frame, this project's convention).
+
+Per-frame COM vectors and the cpptraj input that produced them are saved
+for each system into <that system's MD dir>/analysis/density_vectors/
+(named after --out's basename, e.g. com_density_species_all7.dat/.in) --
+not just a throwaway tempdir -- so the heatmap is reproducible/auditable
+without re-running cpptraj.
 """
 import argparse
 import subprocess
 import tempfile
+import shutil
 import os
 import numpy as np
 import matplotlib
@@ -62,21 +69,44 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 
 
-def extract_com(prmtop, traj, all_masks, anchor_mask, workdir):
+def extract_com(prmtop, traj, all_masks, anchor_mask, workdir, save_tag):
+    # Use a bare relative filename (not the full tempdir path) in the
+    # script itself, and run cpptraj with cwd=workdir below -- this way the
+    # .in file saved further down is directly re-runnable as-is (just `cd`
+    # into the saved density_vectors/ folder and `cpptraj -i <tag>.in`),
+    # rather than pointing at a tempdir that no longer exists once this
+    # script finishes.
     out = os.path.join(workdir, "com.dat")
     lines = [f"parm {prmtop}", f"trajin {traj}",
              f"autoimage anchor {anchor_mask} origin"]
     for i, mask in enumerate(all_masks):
-        lines.append(f"vector B{i} {mask} out {out} center")
+        lines.append(f"vector B{i} {mask} out com.dat center")
     lines.append("run")
     script = os.path.join(workdir, "extract.in")
     with open(script, "w") as f:
         f.write("\n".join(lines) + "\n")
-    result = subprocess.run(["cpptraj", "-i", script], capture_output=True, text=True)
+    result = subprocess.run(["cpptraj", "-i", script], capture_output=True, text=True, cwd=workdir)
     if result.returncode != 0 or not os.path.exists(out):
         print(result.stdout)
         print(result.stderr)
         raise RuntimeError(f"cpptraj COM extraction failed for {traj}")
+
+    # Persist the raw per-frame COM vectors + the cpptraj input that produced
+    # them into THIS system's own MD/analysis/ folder, alongside its other
+    # analysis output (rdf_*.dat, com_distances.dat, ...). Without this they
+    # only ever exist in a throwaway tempdir and vanish the moment this
+    # script exits, which makes a heatmap unreproducible/unauditable without
+    # re-running cpptraj from scratch. mddir is recovered from the prmtop
+    # path (".../MD/system.prmtop" -> ".../MD"), matching this project's own
+    # MD/analysis/ convention; save_tag (derived from --out) keeps multiple
+    # different heatmap runs against the same system from overwriting each
+    # other's saved vectors.
+    mddir = os.path.dirname(prmtop)
+    save_dir = os.path.join(mddir, "analysis", "density_vectors")
+    os.makedirs(save_dir, exist_ok=True)
+    shutil.copy(out, os.path.join(save_dir, f"{save_tag}.dat"))
+    shutil.copy(script, os.path.join(save_dir, f"{save_tag}.in"))
+
     return out
 
 
@@ -151,10 +181,12 @@ def main():
     all_masks = [mask for _, mask in args.body_mask]
     n_bodies = len(all_masks)
 
+    save_tag = os.path.splitext(os.path.basename(args.out))[0]
+
     all_windows, all_labels, all_frames = [], [], []
     with tempfile.TemporaryDirectory() as workdir:
         for label, prmtop, traj in args.system:
-            com_file = extract_com(prmtop, traj, all_masks, args.anchor_mask, workdir)
+            com_file = extract_com(prmtop, traj, all_masks, args.anchor_mask, workdir, save_tag)
             frames, bodies = load(com_file, n_bodies)
             wins, win_ranges = window_data(frames, bodies, species_of_body, args.field_species,
                                             args.mark_species, args.windows, args.box_half, args.bins)

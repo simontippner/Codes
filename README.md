@@ -98,6 +98,21 @@ Personal code repository for computational chemistry / data analysis scripts
   omitted-marker case the option is meant to support. Guarded on
   `legend_handles` being non-empty.)
 
+  The per-frame COM vectors and the cpptraj input that produced them used
+  to live only in a `tempfile.TemporaryDirectory()` and vanish the moment
+  the script exited, with no way to audit or re-plot a heatmap without
+  re-running cpptraj from scratch. Now persisted for each system into
+  `<that system's own MD dir>/analysis/density_vectors/<tag>.dat` and
+  `.in` (`<tag>` = the basename of `--out`, so e.g. several different
+  heatmap runs against the same system — `com_density_species_all7`,
+  `solvent_density_all7`, `nh4_density_all7`, ... — don't overwrite each
+  other, each landing right next to that system's other analysis output
+  like `rdf_*.dat`/`com_distances.dat`). The saved `.in` file uses a bare
+  relative `com.dat` output filename (cpptraj run with `cwd=workdir`), not
+  the throwaway tempdir's absolute path, so it's directly re-runnable as-is
+  — `cd` into the saved `density_vectors/` folder and `cpptraj -i <tag>.in`
+  regenerates `com.dat` right there, no path editing needed.
+
 - **`solvent_density_timeseries.py`** — the solvent-side companion: same
   time-windowed, centroid-recentered 2D density heatmap, but for solvent
   molecules (e.g. water/methanol O) instead of solute bodies, to see
@@ -127,6 +142,15 @@ Personal code repository for computational chemistry / data analysis scripts
       --solvent-mask ":WAT@O" --solvent-mask ":MOH@O1" \
       --anchor-mask ":1-10" --windows 5 --box-half 27 --out out.png
   ```
+  Same vector-persistence behavior as `com_density_timeseries.py` above:
+  the solute-body COM vectors (`com.dat`) and the cpptraj input that
+  produced them are saved into each system's own `MD/analysis/
+  density_vectors/<tag>.dat`/`.in`. The large stripped solvent trajectory
+  itself (`solvent.nc`, one frame × every solvent/ion atom — can be
+  hundreds of MB to GB-scale at high water content) is deliberately **not**
+  kept; it's deleted right after use and is fully regenerable from the
+  saved `.in` file run against the same production trajectory, so nothing
+  is lost for reproducibility, just disk space.
 
 - **`com_3d_snapshots.py`** — the 3D companion: matplotlib has no good
   volumetric/density rendering, so rather than a pooled 3D density this
