@@ -13,6 +13,20 @@ used throughout 04_uvvis, but WITHOUT CPCM -- the MM point charges supply
 the solvent electrostatics instead (combining both would double-count the
 solvent response).
 
+Frame extraction is a two-stage pipeline:
+  Stage A (this script, one single cpptraj pass per --system): load the
+  trajectory, autoimage-center on the QM region's first body (the CAT/
+  Mo3S13 cluster, "MoS", for this project's default --qm-mask "^1,2"), and
+  `trajout ... ncrestart multi` to dump every selected frame as its own
+  full-system restart file straight away -- cpptraj numbers these
+  sequentially (1, 2, 3, ...) by selection order, which is also the FRAMES
+  numbering used below. This is the persisted, inspectable raw snapshot
+  (same "don't just use a throwaway tempdir" convention as md/
+  com_density_timeseries.py in this repo).
+  Stage B (per frame, parallel): make_qmmm_frame.py reads that small
+  single-frame snapshot.ncrst (not the original multi-GB trajectory) and
+  truncates it to the QM .xyz + MM .pc shell.
+
 Frame selection is deliberately dumb equal-spacing over the WHOLE
 trajectory (frame 1, 1+stride, 1+2*stride, ...), not clustering -- this
 script only sets up the cheap ground-state-SP ensemble path from the
@@ -39,6 +53,7 @@ Usage:
 """
 import argparse
 import os
+import re
 import subprocess
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -75,16 +90,68 @@ def n_frames_in_traj(prmtop, traj):
     return int(m.group(1))
 
 
-def extract_one(prmtop, traj, frame_idx, framedir, qm_mask, shell):
-    os.makedirs(framedir, exist_ok=True)
+def anchor_from_qm_mask(qm_mask):
+    """First body named in --qm-mask -- the CAT/Mo3S13 ("MoS") cluster for
+    this project's convention of listing CAT before PS, e.g. "^1,2" -> "^1".
+    """
+    m = re.match(r"^([:^@])", qm_mask)
+    if not m:
+        raise ValueError(f"qm_mask {qm_mask!r} must start with one of : ^ @")
+    prefix = m.group(1)
+    first_token = qm_mask[1:].split(",")[0]
+    return f"{prefix}{first_token}"
+
+
+def extract_ncrst_batch(prmtop, traj, frame_indices, anchor_mask, framesdir):
+    """Stage A: one cpptraj pass -- load the trajectory, autoimage-center
+    on anchor_mask (the CAT/MoS cluster), and dump every selected frame as
+    its own full-system restart via `trajout ... ncrestart multi`.
+    cpptraj numbers the written files sequentially by selection order
+    (snapshot.ncrst.1, .2, ... -- NOT by original frame number), which
+    conveniently matches the 1-based FRAMES/<i> numbering used throughout
+    this pipeline.
+    """
+    tag_out = os.path.join(framesdir, "snapshot.ncrst")
+    lines = [f"parm {prmtop}"]
+    for fidx in frame_indices:
+        lines.append(f"trajin {traj} {fidx} {fidx}")
+    lines.append(f"autoimage anchor {anchor_mask} origin")
+    lines.append(f"trajout {tag_out} ncrestart multi")
+    lines.append("run")
+    script_path = os.path.join(framesdir, "extract_ncrst.in")
+    with open(script_path, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    result = subprocess.run(["cpptraj", "-i", script_path], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr)
+        raise RuntimeError(f"cpptraj ncrestart extraction failed for {traj}")
+
+    for i in range(1, len(frame_indices) + 1):
+        src = f"{tag_out}.{i}"
+        framedir = os.path.join(framesdir, str(i))
+        os.makedirs(framedir, exist_ok=True)
+        dst = os.path.join(framedir, "snapshot.ncrst")
+        if not os.path.exists(src):
+            raise RuntimeError(f"expected {src} after cpptraj ncrestart extraction, not found")
+        os.replace(src, dst)
+    return script_path
+
+
+def extract_one(prmtop, framedir, qm_mask, shell):
+    """Stage B: strip the already-centered per-frame snapshot.ncrst (from
+    extract_ncrst_batch) down to the QM .xyz + MM .pc shell. Frame index is
+    always 1 -- snapshot.ncrst is a single-frame restart, not the original
+    multi-thousand-frame trajectory."""
+    snap = os.path.join(framedir, "snapshot.ncrst")
     prefix = os.path.join(framedir, "frame")
     result = subprocess.run(
-        ["python3", MAKE_FRAME, prmtop, traj, str(frame_idx),
+        ["python3", MAKE_FRAME, prmtop, snap, "1",
          "--qm-mask", qm_mask, "--shell", str(shell), "--out-prefix", prefix],
         capture_output=True, text=True)
     if result.returncode != 0:
-        return (framedir, frame_idx, False, result.stdout + result.stderr)
-    return (framedir, frame_idx, True, result.stdout.strip())
+        return (framedir, False, result.stdout + result.stderr)
+    return (framedir, True, result.stdout.strip())
 
 
 def write_inp(framedir, label, qm_mask, charge, mult, nprocs, maxcore):
@@ -166,21 +233,26 @@ def main():
             for i, fidx in enumerate(frame_indices, start=1):
                 mf.write(f"{i}\t{fidx}\n")
 
+        anchor_mask = anchor_from_qm_mask(args.qm_mask)
+        print(f"  Stage A: cpptraj ncrestart extraction, anchor={anchor_mask} (CAT/MoS) ...")
+        extract_ncrst_batch(prmtop, traj, frame_indices, anchor_mask, framesdir)
+        print(f"  Stage A done: {len(frame_indices)} snapshot.ncrst written under {framesdir}/<i>/")
+
+        print("  Stage B: QM .xyz + MM .pc per frame ...")
         jobs = []
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            for i, fidx in enumerate(frame_indices, start=1):
+            for i in range(1, len(frame_indices) + 1):
                 framedir = os.path.join(framesdir, str(i))
-                jobs.append(pool.submit(extract_one, prmtop, traj, fidx, framedir,
-                                         args.qm_mask, args.shell))
+                jobs.append(pool.submit(extract_one, prmtop, framedir, args.qm_mask, args.shell))
             n_ok, n_fail = 0, 0
             for fut in as_completed(jobs):
-                framedir, fidx, ok, msg = fut.result()
+                framedir, ok, msg = fut.result()
                 if ok:
                     n_ok += 1
                 else:
                     n_fail += 1
-                    print(f"  FAILED frame {fidx} ({framedir}):\n{msg}")
-        print(f"  extraction done: {n_ok} ok, {n_fail} failed")
+                    print(f"  FAILED ({framedir}):\n{msg}")
+        print(f"  Stage B done: {n_ok} ok, {n_fail} failed")
 
         for i in range(1, len(frame_indices) + 1):
             framedir = os.path.join(framesdir, str(i))
@@ -188,8 +260,7 @@ def main():
                 write_inp(framedir, label, args.qm_mask, args.qm_charge, args.qm_mult,
                           args.nprocs, args.maxcore)
 
-        import re as _re
-        tag = _re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
+        tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
         array_path = write_submit_array(outdir, len(frame_indices), args.nprocs,
                                          args.concurrency, tag=tag)
         print(f"  wrote {array_path} (NOT submitted -- sbatch it yourself when ready)")
