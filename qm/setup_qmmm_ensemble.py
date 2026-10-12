@@ -164,6 +164,72 @@ def write_inp(framedir, label, qm_mask, charge, mult, nprocs, maxcore):
     return inp_path
 
 
+QMMM_IN_TEMPLATE = """qmmm single point via ORCA EXTERN (ifqnt), already-centered snapshot.ncrst
+&cntrl
+ nstlim = 0, dt = 0.0005,
+ ntx = 1, irest = 0, iwrap=0, cut = 999.0,
+ ntpr = 1, ntwr = 1, ntwx = 1,
+ tempi = 300., temp0 = 300.,
+ ntt = 0, gamma_ln=0.,
+ ntb = 0, ntp = 0,
+ ntc = 2, ntf = 2,
+ noshakemask = "{qm_resmask}",
+ ifqnt=1,
+&end
+
+&qmmm
+qmmask='{qm_resmask}',
+qmcharge={charge},
+spin={mult},
+qm_theory='EXTERN',
+qmshake=0,
+qm_ewald=0,
+qm_pme=0,
+qmcut=999.,
+adjust_q=0,
+&end
+&orc
+use_template=1,
+&end
+"""
+
+ORC_TPL_TEMPLATE = """{method}
+%maxcore {maxcore}
+
+%scf
+  MaxIter 5000
+end
+"""
+
+
+def write_sander_inputs(framesdir, prmtop, n_frames, qm_resmask, charge, mult, maxcore):
+    """Write the shared sander qmmm.in + ORCA orc_job.tpl (same content for
+    every frame of one --system) once at the FRAMES/ level, then symlink
+    them -- plus the system topology -- into every FRAMES/<i>/ so each
+    frame folder is self-contained for `sander -p system.prmtop -c
+    snapshot.ncrst -i qmmm.in` without duplicating the (several-MB)
+    topology file N times.
+    """
+    qmmm_in = os.path.join(framesdir, "qmmm.in")
+    with open(qmmm_in, "w") as f:
+        f.write(QMMM_IN_TEMPLATE.format(qm_resmask=qm_resmask, charge=charge, mult=mult))
+
+    orc_tpl = os.path.join(framesdir, "orc_job.tpl")
+    with open(orc_tpl, "w") as f:
+        f.write(ORC_TPL_TEMPLATE.format(method=ORCA_METHOD, maxcore=maxcore))
+
+    prmtop_abs = os.path.abspath(prmtop)
+    for i in range(1, n_frames + 1):
+        framedir = os.path.join(framesdir, str(i))
+        for name, target in (("qmmm.in", qmmm_in), ("orc_job.tpl", orc_tpl),
+                              ("system.prmtop", prmtop_abs)):
+            link = os.path.join(framedir, name)
+            if os.path.islink(link) or os.path.exists(link):
+                os.remove(link)
+            os.symlink(os.path.abspath(target), link)
+    return qmmm_in, orc_tpl
+
+
 SLURM_ARRAY_TEMPLATE = """#!/bin/bash
 #SBATCH -J qmmm_{tag}
 #SBATCH -p compute
@@ -194,7 +260,12 @@ def main():
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--system", nargs=3, action="append", required=True,
                      metavar=("LABEL", "PRMTOP", "TRAJ"))
-    ap.add_argument("--qm-mask", default="^1,2")
+    ap.add_argument("--qm-mask", default="^1,2",
+                     help="cpptraj molecule-number mask for make_qmmm_frame.py (shell-truncation path)")
+    ap.add_argument("--qm-resmask", default=None,
+                     help="standard AMBER residue mask for sander's &qmmm qmmask/noshakemask "
+                          "(sander does not understand '^' molecule masks) -- required to write "
+                          "qmmm.in/orc_job.tpl, e.g. \":1-11\"")
     ap.add_argument("--shell", type=float, default=18.0)
     ap.add_argument("--qm-charge", type=int, default=0)
     ap.add_argument("--qm-mult", type=int, default=1)
@@ -207,13 +278,28 @@ def main():
                      help="subfolder created inside each system's MD dir")
     ap.add_argument("--workers", type=int, default=16,
                      help="parallel worker processes for the (cheap, CPU-only) frame extraction")
+    ap.add_argument("--sander-only", action="store_true",
+                     help="skip Stage A/B (assume FRAMES/<i>/ already populated from a previous run) "
+                          "and only (re)write qmmm.in/orc_job.tpl + symlinks -- requires --qm-resmask")
     args = ap.parse_args()
+
+    if args.qm_resmask is None and args.sander_only:
+        ap.error("--sander-only requires --qm-resmask")
 
     for label, prmtop, traj in args.system:
         mddir = os.path.dirname(prmtop)
         outdir = os.path.join(mddir, args.out_dir)
         framesdir = os.path.join(outdir, "FRAMES")
         os.makedirs(framesdir, exist_ok=True)
+
+        if args.sander_only:
+            existing = [int(d) for d in os.listdir(framesdir) if d.isdigit()]
+            n_frames_here = max(existing) if existing else 0
+            print(f"=== {label}: --sander-only, found {n_frames_here} existing FRAMES/<i>/ ===")
+            write_sander_inputs(framesdir, prmtop, n_frames_here, args.qm_resmask,
+                                 args.qm_charge, args.qm_mult, args.maxcore)
+            print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {n_frames_here} frame dirs")
+            continue
 
         n_total = n_frames_in_traj(prmtop, traj)
         stride = max(1, n_total // args.n_frames)
@@ -259,6 +345,11 @@ def main():
             if os.path.exists(os.path.join(framedir, "frame_qm.xyz")):
                 write_inp(framedir, label, args.qm_mask, args.qm_charge, args.qm_mult,
                           args.nprocs, args.maxcore)
+
+        if args.qm_resmask:
+            write_sander_inputs(framesdir, prmtop, len(frame_indices), args.qm_resmask,
+                                 args.qm_charge, args.qm_mult, args.maxcore)
+            print(f"  wrote qmmm.in + orc_job.tpl, symlinked into all {len(frame_indices)} frame dirs")
 
         tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
         array_path = write_submit_array(outdir, len(frame_indices), args.nprocs,
