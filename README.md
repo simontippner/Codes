@@ -251,31 +251,43 @@ from a job that's still running, since they only read the shared-filesystem
   --qm-mask "^1,2" --out-prefix frame499`
 
 - **`setup_qmmm_ensemble.py --system LABEL PRMTOP TRAJ [--system ...]
-  --qm-mask MASK [--shell 18.0] [--qm-charge 0] [--qm-mult 1] [--n-frames
-  2000] [--nprocs 16] [--out-dir QM_ensemble_SPE] [--workers 16]`** —
-  batch-builds a whole point-charge QM/MM snapshot ensemble on top of
-  `make_qmmm_frame.py`: picks `--n-frames` equally-spaced frames across
-  each `--system`'s full trajectory, extracts each one in parallel
-  (`ProcessPoolExecutor`, `--workers` processes — cheap/CPU-only, no GPU or
-  cluster submission needed for this step), and writes a ready-to-run ORCA
-  ground-state single-point input per frame (B3LYP-D3(BJ)/def2-TZVP/
-  RIJCOSX/def2-J, same level as the rest of `04_uvvis` but WITHOUT CPCM —
-  the MM point charges already supply the solvent electrostatics, so
-  adding a continuum model would double-count it). Lays frames out as
-  `<out-dir>/FRAMES/<i>/{frame_qm.xyz,frame_mm.pc,frame.inp}` (1-based,
-  sequential `i`, independent of the original trajectory frame number —
-  see that system's `manifest.txt` for the `i -> original frame` mapping
-  and the exact mask/charge/method used) under each system's own `MD/`
-  directory. Also writes (but does NOT submit) a `submit_array.slurm`
-  SLURM array covering all extracted frames, reusing `orca_submit.slurm`
-  unmodified per array task — `sbatch` it yourself once ready; this script
-  only ever touches the filesystem, never the queue. Run the RMSD
-  autocorrelation of the system first (see
-  `Luca/05_qmmm_ensemble/decorrelation/`) to know how many of `--n-frames`
-  are actually statistically independent — equal spacing alone does not
-  guarantee that.
+  --qm-mask MASK [--qm-resmask MASK] [--shell 18.0] [--qm-charge 0]
+  [--qm-mult 1] [--n-frames 2000] [--nprocs 16] [--out-dir QM_ensemble_SPE]
+  [--workers 16] [--sander-only]`** — batch-builds a QM/MM snapshot
+  ensemble from an existing AMBER MD trajectory, two stages per `--system`:
+  Stage A is one single cpptraj pass — `trajin` every `--n-frames`
+  equally-spaced frame, `autoimage anchor <CAT/MoS> origin`, then
+  `trajout ... ncrestart multi` to dump each selected frame straight to
+  its own full-system restart (cpptraj numbers these sequentially by
+  selection order, matching the 1-based `FRAMES/<i>` layout used
+  throughout) — persisted, not a throwaway tempdir. Stage B runs
+  `make_qmmm_frame.py` on each small per-frame restart (not the original
+  multi-GB trajectory) in parallel (`ProcessPoolExecutor`, `--workers`
+  processes) to also write the shell-truncated QM `.xyz` + MM point-charge
+  `.pc`, plus a ready-to-run plain-ORCA `.inp` (`%pointcharges`,
+  B3LYP-D3(BJ)/def2-TZVP/RIJCOSX/def2-J — same level as the rest of
+  `04_uvvis` but WITHOUT CPCM, since the point charges already supply the
+  solvent electrostatics). Passing `--qm-resmask` (a standard AMBER
+  residue mask, e.g. `":1-11"` — sander doesn't understand `--qm-mask`'s
+  `^`-molecule-number syntax) additionally writes a shared `qmmm.in`
+  (sander `&cntrl`/`&qmmm`/`&orc`, `ifqnt=1`, `qm_theory='EXTERN'`) +
+  `orc_job.tpl` (the ORCA method block, via `use_template=1`) per system,
+  symlinked together with `system.prmtop` into every `FRAMES/<i>/` — the
+  full-box electrostatic-embedding alternative to the point-charge/.pc
+  path, matching this group's established Redoxpotentials QM-ensemble
+  project layout. `--sander-only` (re)writes just that qmmm.in/orc_job.tpl
+  step against an already-extracted `FRAMES/` tree, skipping Stage A/B
+  entirely. Every frame folder's provenance (which original trajectory
+  frame `i` maps to, and the exact mask/charge/method used) is recorded in
+  that system's `manifest.txt`. Also writes (but does NOT submit) a
+  `submit_array.slurm` SLURM array for the plain-ORCA `.inp` path, reusing
+  `orca_submit.slurm` unmodified per array task — this script only ever
+  touches the filesystem, never the queue. Run the RMSD autocorrelation of
+  the system first (see `Luca/05_qmmm_ensemble/decorrelation/`) to know
+  how many of `--n-frames` are actually statistically independent — equal
+  spacing alone does not guarantee that.
   Example: `python3 setup_qmmm_ensemble.py --system "0% water, buf=exp"
-  system.prmtop 04_prod.nc --qm-mask "^1,2" --n-frames 2000`
+  system.prmtop 04_prod.nc --qm-mask "^1,2" --qm-resmask ":1-11" --n-frames 2000`
 
 ## plotting/ — figure-making helpers
 
