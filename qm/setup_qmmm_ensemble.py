@@ -144,13 +144,18 @@ def extract_ncrst_batch(prmtop, traj, frame_indices, anchor_mask, framesdir):
     return script_path
 
 
-def extract_one(prmtop, framedir, qm_mask, shell):
+def extract_one(prmtop, framedir, qm_mask, shell, tag="frame"):
     """Stage B: strip the already-centered per-frame snapshot.ncrst (from
     extract_ncrst_batch) down to the QM .xyz + MM .pc shell. Frame index is
     always 1 -- snapshot.ncrst is a single-frame restart, not the original
-    multi-thousand-frame trajectory."""
+    multi-thousand-frame trajectory.
+
+    tag: filename prefix, so additional regions (e.g. "cat", "ps" for an
+    interaction-energy decomposition) don't clobber the default "frame"
+    region's frame_qm.xyz/frame_mm.pc -- see make_qmmm_frame.py --out-prefix.
+    """
     snap = os.path.join(framedir, "snapshot.ncrst")
-    prefix = os.path.join(framedir, "frame")
+    prefix = os.path.join(framedir, tag)
     result = subprocess.run(
         ["python3", MAKE_FRAME, prmtop, snap, "1",
          "--qm-mask", qm_mask, "--shell", str(shell), "--out-prefix", prefix],
@@ -160,13 +165,13 @@ def extract_one(prmtop, framedir, qm_mask, shell):
     return (framedir, True, result.stdout.strip())
 
 
-def write_inp(framedir, label, qm_mask, charge, mult, nprocs, maxcore):
-    inp_path = os.path.join(framedir, "frame.inp")
+def write_inp(framedir, label, qm_mask, charge, mult, nprocs, maxcore, tag="frame"):
+    inp_path = os.path.join(framedir, f"{tag}.inp")
     with open(inp_path, "w") as f:
         f.write(INP_TEMPLATE.format(
-            qm_mask=qm_mask, label=label, pc_name="frame_mm.pc",
+            qm_mask=qm_mask, label=label, pc_name=f"{tag}_mm.pc",
             method=ORCA_METHOD, nprocs=nprocs, maxcore=maxcore,
-            charge=charge, mult=mult, xyz_name="frame_qm.xyz"))
+            charge=charge, mult=mult, xyz_name=f"{tag}_qm.xyz"))
     return inp_path
 
 
@@ -282,6 +287,40 @@ def write_submit_array(outdir, n_frames, nprocs, concurrency, tag):
     return path
 
 
+PLAIN_REGION_ARRAY_TEMPLATE = """#!/bin/bash
+#SBATCH -J qmmm_{tag}_{region}
+#SBATCH -p compute
+#SBATCH -N 1
+#SBATCH --ntasks-per-node={nprocs}
+#SBATCH --array={array_spec}%{concurrency}
+#SBATCH --output=FRAMES/%a/slurm-{region}-%A_%a.out
+#SBATCH --error=FRAMES/%a/slurm-{region}-%A_%a.err
+
+cd "FRAMES/$SLURM_ARRAY_TASK_ID"
+export SLURM_SUBMIT_DIR="$(pwd)"
+bash {orca_submit} {region}.inp
+"""
+
+
+def write_submit_array_region(outdir, array_spec, nprocs, concurrency, tag, region):
+    """Plain-ORCA SLURM array for one named region (e.g. "cat", "ps") of the
+    point-charge path, one array task per frame via orca_submit.slurm on
+    <region>.inp. array_spec is a SLURM array string -- a plain range
+    ("1-18") or an explicit list/range mix ("1,3-18") to target only
+    specific already-extracted frames (e.g. the ones whose "frame"/complex
+    region already finished, for an interaction-energy decomposition run
+    after the fact).
+    """
+    path = os.path.join(outdir, f"submit_array_{region}.slurm")
+    orca_submit = os.path.join(HERE, "orca_submit.slurm")
+    with open(path, "w") as f:
+        f.write(PLAIN_REGION_ARRAY_TEMPLATE.format(
+            tag=tag, region=region, nprocs=nprocs, array_spec=array_spec,
+            concurrency=concurrency, orca_submit=orca_submit))
+    os.chmod(path, 0o755)
+    return path
+
+
 SANDER_ARRAY_TEMPLATE = """#!/bin/bash
 #SBATCH -J qmmmS_{tag}_{region}
 #SBATCH -p compute
@@ -328,12 +367,20 @@ def main():
                      help="standard AMBER residue mask for the CAT-alone region (interaction-energy "
                           "decomposition), e.g. \":1-10\" -- PS becomes classical/MM in this region's "
                           "qmmm_cat.in. Requires --qm-resmask; --cat-charge/--cat-mult to match.")
+    ap.add_argument("--cat-mask", default=None,
+                     help="cpptraj molecule-number mask for the CAT-alone region on the PLAIN-ORCA "
+                          "point-charge path (make_qmmm_frame.py), e.g. \"^1\" -- analogous to "
+                          "--cat-resmask but for --plain-orca-only instead of --sander-only.")
     ap.add_argument("--cat-charge", type=int, default=-2)
     ap.add_argument("--cat-mult", type=int, default=1)
     ap.add_argument("--ps-resmask", default=None,
                      help="standard AMBER residue mask for the PS-alone region, e.g. \":11\" -- CAT "
                           "becomes classical/MM in this region's qmmm_ps.in. Requires --qm-resmask; "
                           "--ps-charge/--ps-mult to match.")
+    ap.add_argument("--ps-mask", default=None,
+                     help="cpptraj molecule-number mask for the PS-alone region on the PLAIN-ORCA "
+                          "point-charge path, e.g. \"^2\" -- analogous to --ps-resmask but for "
+                          "--plain-orca-only instead of --sander-only.")
     ap.add_argument("--ps-charge", type=int, default=2)
     ap.add_argument("--ps-mult", type=int, default=1)
     ap.add_argument("--shell", type=float, default=18.0)
@@ -351,10 +398,34 @@ def main():
     ap.add_argument("--sander-only", action="store_true",
                      help="skip Stage A/B (assume FRAMES/<i>/ already populated from a previous run) "
                           "and only (re)write qmmm.in/orc_job.tpl + symlinks -- requires --qm-resmask")
+    ap.add_argument("--plain-orca-only", action="store_true",
+                     help="skip Stage A/B; only (re)run Stage B's make_qmmm_frame.py + write a .inp "
+                          "for additional regions (--cat-mask/--ps-mask) on an already-extracted "
+                          "FRAMES/ tree, e.g. to add the cat-alone/ps-alone interaction-energy "
+                          "decomposition after the complex region has already been run/submitted. "
+                          "Use --frames to target only specific frame indices (e.g. the ones whose "
+                          "complex region already finished) instead of every FRAMES/<i>/ present.")
+    ap.add_argument("--frames", default=None,
+                     help="comma/range list of frame indices to target with --plain-orca-only, e.g. "
+                          "\"1,3-18\" -- also used verbatim as the SLURM --array spec. Default: all "
+                          "frame dirs found under FRAMES/.")
     args = ap.parse_args()
 
     if args.qm_resmask is None and args.sander_only:
         ap.error("--sander-only requires --qm-resmask")
+    if args.plain_orca_only and not (args.cat_mask or args.ps_mask):
+        ap.error("--plain-orca-only requires --cat-mask and/or --ps-mask")
+
+    def parse_frame_spec(spec):
+        """'1,3-18' -> [1,3,4,...,18], preserving order/dedup via sorted set."""
+        out = set()
+        for part in spec.split(","):
+            if "-" in part:
+                lo, hi = part.split("-")
+                out.update(range(int(lo), int(hi) + 1))
+            else:
+                out.add(int(part))
+        return sorted(out)
 
     def build_regions():
         regions = []
@@ -374,6 +445,43 @@ def main():
         outdir = os.path.join(mddir, args.out_dir)
         framesdir = os.path.join(outdir, "FRAMES")
         os.makedirs(framesdir, exist_ok=True)
+
+        if args.plain_orca_only:
+            existing = sorted(int(d) for d in os.listdir(framesdir) if d.isdigit())
+            frame_list = parse_frame_spec(args.frames) if args.frames else existing
+            tag = re.sub(r"[^A-Za-z0-9]+", "_", label).strip("_") or "sys"
+            print(f"=== {label}: --plain-orca-only, targeting {len(frame_list)} frames "
+                  f"({frame_list[0]}..{frame_list[-1]}) ===")
+            for region_tag, mask, charge, mult in (
+                    ("cat", args.cat_mask, args.cat_charge, args.cat_mult),
+                    ("ps", args.ps_mask, args.ps_charge, args.ps_mult)):
+                if not mask:
+                    continue
+                print(f"  region={region_tag}: extracting + writing .inp for {len(frame_list)} frames ...")
+                jobs = []
+                with ProcessPoolExecutor(max_workers=args.workers) as pool:
+                    for i in frame_list:
+                        framedir = os.path.join(framesdir, str(i))
+                        jobs.append(pool.submit(extract_one, prmtop, framedir, mask, args.shell, region_tag))
+                    n_ok, n_fail = 0, 0
+                    for fut in as_completed(jobs):
+                        framedir, ok, msg = fut.result()
+                        if ok:
+                            n_ok += 1
+                        else:
+                            n_fail += 1
+                            print(f"    FAILED ({framedir}):\n{msg}")
+                print(f"    extraction: {n_ok} ok, {n_fail} failed")
+                for i in frame_list:
+                    framedir = os.path.join(framesdir, str(i))
+                    if os.path.exists(os.path.join(framedir, f"{region_tag}_qm.xyz")):
+                        write_inp(framedir, label, mask, charge, mult, args.nprocs, args.maxcore,
+                                  tag=region_tag)
+                array_spec = args.frames or f"1-{max(frame_list)}"
+                array_path = write_submit_array_region(outdir, array_spec, args.nprocs,
+                                                        args.concurrency, tag, region_tag)
+                print(f"  wrote {array_path} (NOT submitted)")
+            continue
 
         if args.sander_only:
             existing = [int(d) for d in os.listdir(framesdir) if d.isdigit()]
