@@ -254,6 +254,13 @@ SLURM_ARRAY_TEMPLATE = """#!/bin/bash
 #SBATCH --error=FRAMES/%a/slurm-%A_%a.err
 
 cd "FRAMES/$SLURM_ARRAY_TASK_ID"
+# orca_submit.slurm does its own `cd $SLURM_SUBMIT_DIR` internally (SLURM
+# sets that to the ORIGINAL sbatch directory, i.e. one level up from here)
+# -- override it to the frame dir we just cd'd into, or that internal cd
+# undoes this one and orca_submit.slurm looks for frame.inp/*.xyz in the
+# wrong directory (confirmed failure mode, 2026-10-13: "cannot stat
+# frame.inp", "Cannot open input file: frame.inp").
+export SLURM_SUBMIT_DIR="$(pwd)"
 bash {orca_submit} frame.inp
 """
 
