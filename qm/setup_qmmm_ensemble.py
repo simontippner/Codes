@@ -61,7 +61,13 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 HERE = os.path.dirname(os.path.abspath(__file__))
 MAKE_FRAME = os.path.join(HERE, "make_qmmm_frame.py")
 
-ORCA_METHOD = "! B3LYP D3BJ def2-TZVP def2/J RIJCOSX TightSCF DefGrid2"
+# SlowConv KDIIS SOSCF: convergence stabilizers, not part of the original
+# 04_uvvis method -- added after frame 1 of 1_PS_1_CAT/0_vol/buf=exp's SCF
+# oscillated for 50 iterations (never settling, energy still swinging ~30
+# Eh step to step) and then fell back to ORCA's slow TRAH algorithm.
+# Matches the convergence aids the Redoxpotentials reference pipeline
+# already used for its own (different) difficult transition-metal SCF.
+ORCA_METHOD = "! B3LYP D3BJ def2-TZVP def2/J RIJCOSX TightSCF DefGrid2 SlowConv KDIIS SOSCF"
 
 INP_TEMPLATE = """# Ground-state single point, QM/MM point-charge embedding
 # QM region: {qm_mask} (from {label})
