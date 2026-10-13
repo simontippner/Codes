@@ -26,8 +26,15 @@ REGION="${1:-complex}"
 
 MPILOC=/usr/remote/mpi/gnu/openmpi-4.1.8
 ORCADIR=/usr/license/orca6/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2
+# sander (amber25) is linked against libfftw3.so.3, resolved via /lib64 on
+# the login node's own ld.so cache -- but NOT present on at least one
+# compute node ("indium", confirmed via "error while loading shared
+# libraries: libfftw3.so.3" there). /usr/license is a shared filesystem
+# visible from every node, so point at a copy living there instead of
+# relying on each compute node's own /lib64.
+FFTW_LIB=/usr/license/amber/amber17/lib
 export PATH="$ORCADIR:$MPILOC/bin:/usr/license/amber25/bin:$PATH"
-export LD_LIBRARY_PATH="$ORCADIR:$MPILOC/lib:/usr/license/amber25/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$ORCADIR:$MPILOC/lib:/usr/license/amber25/lib:$FFTW_LIB:$LD_LIBRARY_PATH"
 export PYTHONPATH="/usr/license/amber25/lib/python3.12/site-packages:${PYTHONPATH:-}"
 export AMBERHOME=/usr/license/amber25
 export OMPI_MCA_btl="^openib"
