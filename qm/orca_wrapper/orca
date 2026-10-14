@@ -1,0 +1,20 @@
+#!/bin/bash
+# Transparent wrapper: patch missing Mo/Ru element symbols in sander's
+# ORCA-EXTERN geometry file (inpfile.xyz, in the current directory) before
+# handing off to the real ORCA binary -- see Codes/qm/patch_mo_ru_labels.py
+# for why this is needed (AmberTools' qm2_extern_orc_module omits Mo/Ru
+# from its atomic-number -> symbol table, confirmed amber24 + amber25).
+#
+# This directory must sit EARLIER in $PATH than the real orca binary's
+# directory for sander to pick this wrapper up instead -- it execs the
+# real binary by its hardcoded absolute path (never via PATH), so there is
+# no risk of infinite recursion regardless of PATH ordering elsewhere.
+set -euo pipefail
+
+REAL_ORCA=/usr/license/orca6/orca_6_1_1_linux_x86-64_shared_openmpi418_avx2/orca
+
+if [ -f inpfile.xyz ]; then
+  python3 /gpfs/data/stippner/Codes/qm/patch_mo_ru_labels.py inpfile.xyz
+fi
+
+exec "$REAL_ORCA" "$@"
