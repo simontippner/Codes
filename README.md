@@ -166,6 +166,17 @@ Personal code repository for computational chemistry / data analysis scripts
       --anchor-mask ":1-10" --n-snapshots 4 --out out.png
   ```
 
+- **`compare_pmf.py LABEL=FILE [LABEL=FILE ...] [--out prefix] [--no-shift]`**
+  — overlays several WHAM PMF curves (column 1 = z, column 2 = PMF, e.g.
+  Grossfield `pmf.dat` / `pmf_shifted.dat`) on one plot, without error bands,
+  each shifted to its own minimum. Handy for comparing an old analysis
+  with a re-run on new data.
+
+  ```bash
+  python3 md/compare_pmf.py "old=wham_analysis/pmf_shifted.dat" \
+      "new=wham_analysis_2026-10-23/pmf_shifted.dat" --out pmf_old_vs_new
+  ```
+
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
 Scripts built around an ORCA 6 workflow: ground-state geometry optimization
