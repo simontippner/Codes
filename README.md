@@ -177,6 +177,19 @@ Personal code repository for computational chemistry / data analysis scripts
       "new=wham_analysis_2026-10-23/pmf_shifted.dat" --out pmf_old_vs_new
   ```
 
+- **`combined_orientation_allsolvents.py`** — umbrella-window orientation of
+  BODIPY (dipyrrin core and phenyl planes) and Mo3S13 (Mo3 plane) vs height in
+  the brush, for 4 conditions (partially/fully protonated brush x 50:50
+  H2O:MeOH / 100% H2O). Reads cpptraj `vector ... corrplane` outputs
+  (`rc.dat`, `core.dat`, `phenyl.dat`, `norm.dat`) and writes P(theta|z) heat
+  maps, mean-angle and order-parameter S(z) profiles, and a text summary of
+  brush/solvent averages with window-level SE (200 frames per window).
+  System paths are hardcoded at the top.
+
+  ```bash
+  python3 md/combined_orientation_allsolvents.py   # run in the output folder
+  ```
+
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
 Scripts built around an ORCA 6 workflow: ground-state geometry optimization
