@@ -190,6 +190,15 @@ Personal code repository for computational chemistry / data analysis scripts
   python3 md/combined_orientation_allsolvents.py   # run in the output folder
   ```
 
+- **`combined_orientation_v3_both.py`** — publication-style version of the
+  above: P(theta|z) heat maps with structure icons, 4 rows (partially/fully
+  protonated brush x 50:50 H2O:MeOH / 100% H2O) x 3 planes, one shared magma
+  colour scale so mixture and water panels are directly comparable.
+
+  ```bash
+  python3 md/combined_orientation_v3_both.py   # run in the output folder
+  ```
+
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
 Scripts built around an ORCA 6 workflow: ground-state geometry optimization
