@@ -122,7 +122,8 @@ for ci, C in enumerate(COLS):
     axes[0, ci].set_title(C["sub"], fontsize=FS_P, pad=8)
     for ri, (rk, rlabel, col, ls) in enumerate(ROWS):
         ax = axes[ri, ci]; d = DATA[(ci, rk)]
-        pc = ax.pcolormesh(aedges, zedges, d["Hn"], cmap="magma", shading="flat", vmin=0, vmax=vmax)
+        pc = ax.pcolormesh(aedges, zedges, d["Hn"], cmap="magma", shading="flat", vmin=0, vmax=vmax,
+                           edgecolors="face", linewidth=0, rasterized=True)  # no cell seams in pdf/svg
         ax.plot(d["th_b"][0], zc, "-", color="cyan", lw=2.2)
         ax.axvline(ISO, ls="--", color="w", lw=1.3)
         ax.axhline(BRUSH_EDGE, ls=":", color="0.85", lw=1.0)

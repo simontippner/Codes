@@ -96,7 +96,8 @@ for ci, C in enumerate(COLS):
         ax = axes[ri, ci]
         Hn, mean_th = PANELS[(ci, rk)]
         pc = ax.pcolormesh(aedges, zedges, Hn, cmap="magma", shading="flat",
-                           vmin=0, vmax=vmax)
+                           vmin=0, vmax=vmax, edgecolors="face", linewidth=0,
+                           rasterized=True)  # no cell seams in pdf/svg
         ax.plot(mean_th, zc, "-", color="cyan", lw=2.2)
         ax.axvline(np.degrees(1.0), ls="--", color="w", lw=1.3)
         ax.set_xlim(0, 90); ax.set_ylim(0, ZMAX)
