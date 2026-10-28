@@ -199,6 +199,16 @@ Personal code repository for computational chemistry / data analysis scripts
   python3 md/combined_orientation_v3_both.py   # run in the output folder
   ```
 
+- **`combined_v2_inbrush.py`** — PS (BODIPY) + CAT (Mo3S13) donor-H solvation
+  figure (brush-solvent, solute-brush and solute-solvent RDFs plus a
+  preferential-solvation map) using only the umbrella windows with the solute
+  inside the brush (z < 58 A = frames 1-23200 of all.nc). Reads cpptraj
+  `radial` outputs from `.../traj/analysis/inbrush/{solute_solvent_H,solute_brush}`.
+
+  ```bash
+  python3 md/combined_v2_inbrush.py   # run in the output folder
+  ```
+
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
 Scripts built around an ORCA 6 workflow: ground-state geometry optimization
