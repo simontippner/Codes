@@ -4,7 +4,8 @@ Combined P(theta | z) orientation heat maps, both brush protonation states and b
 solvents in one figure (same style as ../combined_figure/combined_orientation_v3.py):
     columns = BODIPY dipyrrin-core plane | BODIPY phenyl-ring plane
               | [Mo3S13]2- basal (Mo3) plane
-    rows    = partially prot. 50:50 H2O:MeOH | partially prot. 100% H2O
+    rows    = (panels a-l, row-major, letters only; conditions in the caption)
+              partially prot. 50:50 H2O:MeOH | partially prot. 100% H2O
               | fully prot. 50:50 H2O:MeOH | fully prot. 100% H2O
 
 theta = angle(plane normal, z), folded to [0,90]
@@ -117,21 +118,23 @@ for ci, C in enumerate(COLS):
         ax.set_xticks([0, 30, 60, 90])
         ax.tick_params(labelsize=FS_T)
         if ri == 0:
-            ax.text(3, ZMAX - 3, "flat", color="w", fontsize=FS_T,
+            ax.text(13, ZMAX - 4.5, "flat", color="w", fontsize=FS_T,
                     ha="left", va="top", fontweight="bold")
-            ax.text(87, ZMAX - 3, "edge-on", color="w", fontsize=FS_T,
+            ax.text(87, ZMAX - 4.5, "edge-on", color="w", fontsize=FS_T,
                     ha="right", va="top", fontweight="bold")
         if ci == 0:
             ax.set_ylabel("solute z-coordinate (Å)", fontsize=FS_AX)
         if ri == len(ROWS) - 1:
             ax.set_xlabel("angle (deg)", fontsize=FS_AX)
 
-for ri, (rk, rlabel) in enumerate(ROWS):
-    axes[ri, 0].text(-0.36, 0.5, rlabel, transform=axes[ri, 0].transAxes,
-                     rotation=90, ha="center", va="center",
-                     fontsize=FS_ROW, fontweight="bold", color="0.25")
+# panel letters a-l (row-major); the row conditions are given in the caption
+for ri in range(len(ROWS)):
+    for ci in range(len(COLS)):
+        axes[ri, ci].text(3, ZMAX - 3, "abcdefghijkl"[ri * len(COLS) + ci],
+                          color="w", fontsize=FS_H, fontweight="bold",
+                          ha="left", va="top")
 
-fig.subplots_adjust(left=0.15, right=0.90, top=0.82, bottom=0.05)
+fig.subplots_adjust(left=0.10, right=0.90, top=0.82, bottom=0.05)
 
 # structure renders above each column, with that column's fitted plane highlighted
 ICON_BOTTOM, ICON_H = 0.835, 0.135
