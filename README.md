@@ -209,6 +209,11 @@ Personal code repository for computational chemistry / data analysis scripts
   python3 md/combined_v2_inbrush.py   # run in the output folder
   ```
 
+- **`combined_v2_water_half_inbrush.py`, `combined_v2_water_full_inbrush.py`** —
+  the same brush-only RDF figure for the water-only runs (partially / fully
+  protonated brush; no methanol, so no preferential-solvation map). Reads
+  `.../traj/analysis/inbrush/{solvent_brush,solute_brush,solute_solvent}`.
+
 ## qm/ — ORCA job setup and TD-DFT UV-vis post-processing
 
 Scripts built around an ORCA 6 workflow: ground-state geometry optimization

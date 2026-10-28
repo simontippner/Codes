@@ -63,10 +63,23 @@ def unit(v):
     return v / np.linalg.norm(v, axis=1, keepdims=True)
 
 
+def fix_z(z, per_win=200, dz=0.5, tol=10.0):
+    """Height from rc.dat, with broken frames replaced by the window target.
+    In a few MoS water windows (full H2O: 53.5, 68.0 A; half H2O: 13 windows at
+    94.5-105 A) all.nc has the brush-anchor group split across the periodic
+    boundary, so the anchor->cluster COM vector is off by 80-170 A although the
+    cluster is intact (Mo-Mo 2.7 A) and the restraint coordinate in dist_*.dat
+    sits on target. Every window is restrained to ~0.25 A of its target, so
+    frames > tol off target get the target height (window i -> i*dz)."""
+    tgt = np.repeat(np.arange(len(z) // per_win + 1) * dz, per_win)[:len(z)]
+    bad = np.abs(z - tgt) > tol
+    return np.where(bad, tgt, z)
+
+
 def load_theta_z(D, vecfile):
     rc = np.loadtxt(f"{D}/rc.dat")[:, 1:4]
     vec = np.loadtxt(f"{D}/{vecfile}")[:, 1:4]
-    z = rc[:, 2]
+    z = fix_z(rc[:, 2])
     th = np.degrees(np.arccos(np.clip(np.abs(unit(vec)[:, 2]), 0, 1)))
     return z, th
 
