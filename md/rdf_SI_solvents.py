@@ -34,7 +34,13 @@ WCOL, MCOL = "#1f7fb5", "#2ca02c"
 C_PROT = {"half": "#fe218b", "full": "#21b0fe"}[PROT]   # as in the PMF figure
 LW = 1.8
 FS_T, FS_AX, FS_P, FS_L, FS_H = 10, 12.5, 11, 9.5, 15
-LS_MIX, LS_WAT = "-", (0, (3.2, 1.6))
+LS_MIX, LS_WAT = "-", (0, (4.5, 2.0))
+import matplotlib.patheffects as pe
+# mixture: thinner solid; water: thicker long dashes with a white halo, so the
+# dashed curves stay readable where they cross the solid ones
+STY = {"mix": dict(lw=1.6, ls=LS_MIX, zorder=2),
+       "wat": dict(lw=2.0, ls=LS_WAT, zorder=3,
+                   path_effects=[pe.Stroke(linewidth=3.0, foreground="white"), pe.Normal()])}
 
 B = "/gpfs/data/stippner/MoS_BODIPY"
 BODB = f"{B}/BODIPY_in_brush/BIGGER/bigger_bottom"
@@ -119,9 +125,9 @@ fig.text(0.525, 0.965, {"half": "partially protonated brush",
 fig.text(0.322, 0.900, "PS: BODIPY", ha="center", fontsize=FS_H, fontweight="bold")
 fig.text(0.74, 0.900, r"CAT: Mo$_3$S$_{13}^{2-}$", ha="center", fontsize=FS_H,
          fontweight="bold")
-fig.legend(handles=[Line2D([], [], color="0.25", lw=2.0, ls=LS_MIX,
+fig.legend(handles=[Line2D([], [], color="0.25", **STY["mix"],
                            label=r"50:50 H$_2$O:MeOH"),
-                    Line2D([], [], color="0.25", lw=2.0, ls=LS_WAT,
+                    Line2D([], [], color="0.25", **STY["wat"],
                            label=r"100% H$_2$O")],
            loc="center", bbox_to_anchor=(0.525, 0.935), ncol=2, fontsize=FS_L + 0.5,
            frameon=False, handlelength=2.4, columnspacing=2.0)
@@ -137,7 +143,7 @@ for si, S in enumerate(SYS):
                 if solv == "wat" and sp == "meoH":
                     continue
                 r, g = ld(path(S, solv, "solute_solvent_H"), "rdf", f"{sp}-{ntag}")
-                ax.plot(r, g, color=col, lw=LW, ls=ls)
+                ax.plot(r, g, color=col, **STY[solv])
         ax.axhline(1, color="0.6", lw=0.9, ls=":")
         ax.set_ylim(0, YR["GBS"]); ax.set_yticks([0, 1, 2])
         xstyle(ax, xlab=False)
@@ -164,8 +170,8 @@ for si, S in enumerate(SYS):
         for solv, ls in (("mix", LS_MIX), ("wat", LS_WAT)):
             for k, (st, sl) in enumerate(S["sites"]):
                 r, g = ld(path(S, solv, "solute_brush"), "rdf", f"{ntag}-{st}")
-                u.plot(r, g, color=CS[k], lw=LW, ls=ls)
-                l.plot(r, g, color=CS[k], lw=LW, ls=ls)
+                u.plot(r, g, color=CS[k], **STY[solv])
+                l.plot(r, g, color=CS[k], **STY[solv])
         l.axhline(1, color="0.6", lw=0.9, ls=":")
         u.set_ylim(*YR[S["name"]]["GHI"]); u.set_yticks(YR[S["name"]]["authk"])
         l.set_ylim(0, YR["GLO"]); l.set_yticks(YR["LOTK"])
@@ -203,7 +209,7 @@ for si, S in enumerate(SYS):
                 continue
             for k, (st, sl) in enumerate(S["sites"]):
                 r, g = ld(path(S, solv, "solute_solvent_H"), "rdf", f"{tag}-{st}")
-                ax.plot(r, g, color=CS[k], lw=LW, ls=ls)
+                ax.plot(r, g, color=CS[k], **STY[solv])
         ax.axhline(1, color="0.6", lw=0.9, ls=":")
         ax.set_ylim(0, YR["GMAX"]); ax.set_yticks([0, 1, 2, 3])
         xstyle(ax, xlab=True)
