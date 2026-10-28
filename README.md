@@ -443,3 +443,14 @@ from a job that's still running, since they only read the shared-filesystem
   Each example folder also contains the matching `.pdf`, `_python.txt`
   (ready-to-paste hex list / colormap), `_latex.tex` (`xcolor`
   `\definecolor` block), and `.json` that the command itself writes.
+
+- **`rdf_SI_solvents.py`** — SI RDF figure for one brush protonation state with
+  both solvents overlaid (solid 50:50 H2O:MeOH, dashed 100% H2O) and both
+  solutes, styled like `combined_v2_inbrush.py`: brush–solvent, solute–brush
+  (broken axis) and solute–solvent RDFs, brush-only (frames 1-23200, z < 58 A),
+  water counted by its H atoms in both solvents.
+
+  ```bash
+  python3 md/rdf_SI_solvents.py half   # -> rdf_SI_solvents_half.{png,svg,pdf}
+  python3 md/rdf_SI_solvents.py full   # -> rdf_SI_solvents_full.{png,svg,pdf}
+  ```
