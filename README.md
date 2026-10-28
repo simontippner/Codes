@@ -195,8 +195,8 @@ Personal code repository for computational chemistry / data analysis scripts
   protonated brush x 50:50 H2O:MeOH / 100% H2O) x 3 planes, one shared magma
   colour scale so mixture and water panels are directly comparable. Panels
   are lettered A-L (row-major), partially (A-F) and fully (G-L) protonated
-  rows grouped with a gap and pink/blue group labels (PMF colours); solvent
-  per row goes in the caption.
+  rows grouped with a gap and pink/blue group labels (PMF colours) and a
+  solvent label per row.
 
   ```bash
   python3 md/combined_orientation_v3_both.py   # run in the output folder
