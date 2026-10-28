@@ -144,7 +144,19 @@ for ri in range(len(ROWS)):
                           color="w", fontsize=FS_H, fontweight="bold",
                           ha="left", va="top")
 
-fig.subplots_adjust(left=0.10, right=0.90, top=0.82, bottom=0.05)
+fig.subplots_adjust(left=0.13, right=0.90, top=0.82, bottom=0.05)
+
+# coloured group labels per protonation block (colours as in the PMF figure)
+C_HALF, C_FULL = "#fe218b", "#21b0fe"
+for (r0, r1), lab, col in [((0, 1), "partially protonated brush", C_HALF),
+                           ((2, 3), "fully protonated brush", C_FULL)]:
+    y1 = axes[r0, 0].get_position().y1
+    y0 = axes[r1, 0].get_position().y0
+    xb = axes[r0, 0].get_position().x0 - 0.072
+    fig.add_artist(plt.Line2D([xb, xb], [y0, y1], color=col, lw=5,
+                              solid_capstyle="butt", transform=fig.transFigure))
+    fig.text(xb - 0.012, (y0 + y1) / 2, lab, rotation=90, ha="center",
+             va="center", fontsize=FS_ROW + 1, fontweight="bold", color=col)
 
 # structure renders above each column, with that column's fitted plane highlighted
 ICON_BOTTOM, ICON_H = 0.835, 0.135
