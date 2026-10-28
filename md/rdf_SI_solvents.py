@@ -35,7 +35,7 @@ WCOL, MCOL = "#1f7fb5", "#2ca02c"
 C_PROT = {"half": "#fe218b", "full": "#21b0fe"}[PROT]   # as in the PMF figure
 LW = 1.8
 FS_T, FS_AX, FS_P, FS_L, FS_H = 10, 12.5, 11, 9.5, 15
-SOLV = [("mix", r"50:50 H$_2$O:MeOH"), ("wat", r"100% H$_2$O")]
+SOLV = [("mix", "50:50\nH$_2$O:MeOH"), ("wat", r"100% H$_2$O")]
 
 B = "/gpfs/data/stippner/MoS_BODIPY"
 BODB = f"{B}/BODIPY_in_brush/BIGGER/bigger_bottom"
@@ -54,11 +54,11 @@ RUN = {
 # upper part GHI with ticks authk, lower part 0-GLO
 YR = {
     "half": dict(GLO=10.5, LOTK=[0, 5, 10], GMAX=3.5, GBS=2.0,
-                 PS=dict(GHI=(28, 66), authk=[40, 60]),
-                 CAT=dict(GHI=(11, 32), authk=[20, 30])),
+                 PS=dict(GHI=(28, 66), authk=[50]),
+                 CAT=dict(GHI=(11, 32), authk=[25])),
     "full": dict(GLO=7.0, LOTK=[0, 3, 6], GMAX=3.5, GBS=2.0,
-                 PS=dict(GHI=(18, 44), authk=[20, 40]),
-                 CAT=dict(GHI=(7.0, 12), authk=[8, 10])),
+                 PS=dict(GHI=(18, 44), authk=[35]),
+                 CAT=dict(GHI=(7.0, 12), authk=[10])),
 }[PROT]
 
 SYS = [
@@ -103,10 +103,10 @@ HR = [2.0, 0.10, 2.0, 0.42, 0.42, 1.7, 0.10, 0.42, 1.7, 0.42, 2.0, 0.10, 2.0]
 R_A = {"mix": 0, "wat": 2}
 R_C = {"mix": (4, 5), "wat": (7, 8)}
 R_E = {"mix": 10, "wat": 12}
-fig = plt.figure(figsize=(8.3, 12.6))
+fig = plt.figure(figsize=(8.3, 9.9))   # 16 x 19 cm at A4 text width, room for a caption
 gs = fig.add_gridspec(len(HR), 5, width_ratios=[1, 1, 0.30, 1, 1], height_ratios=HR,
                       hspace=0.10, wspace=0.05,
-                      left=0.145, right=0.885, top=0.915, bottom=0.05)
+                      left=0.145, right=0.885, top=0.902, bottom=0.064)
 DC = [0, 1, 3, 4]
 
 
@@ -119,11 +119,11 @@ def row_axes(r, sharex=None):
             fig.add_subplot(gs[r, 3:5], sharex=sharex[1] if sharex else None)]
 
 
-fig.text(0.515, 0.977, {"half": "partially protonated brush",
+fig.text(0.515, 0.972, {"half": "partially protonated brush",
                         "full": "fully protonated brush"}[PROT],
          ha="center", fontsize=FS_H, fontweight="bold", color=C_PROT)
-fig.text(0.31, 0.945, "PS: BODIPY", ha="center", fontsize=FS_H, fontweight="bold")
-fig.text(0.72, 0.945, r"CAT: Mo$_3$S$_{13}^{2-}$", ha="center", fontsize=FS_H,
+fig.text(0.31, 0.934, "PS: BODIPY", ha="center", fontsize=FS_H, fontweight="bold")
+fig.text(0.72, 0.934, r"CAT: Mo$_3$S$_{13}^{2-}$", ha="center", fontsize=FS_H,
          fontweight="bold")
 
 n = len(NTAGS)
@@ -239,13 +239,14 @@ for top, bot, lab in BLOCKS:
              fontsize=FS_AX - 1, fontweight="bold")
 
 # solvent label on the right of every row (pair, for the broken axis)
-xr = A["mix"][-1].get_position().x1 + 0.025
+xr = A["mix"][-1].get_position().x1 + 0.035
 for solv, top, bot in [("mix", A["mix"][-1], A["mix"][-1]), ("wat", A["wat"][-1], A["wat"][-1]),
                        ("mix", BU["mix"][-1], BL["mix"][-1]), ("wat", BU["wat"][-1], BL["wat"][-1]),
                        ("mix", C["mix"][-1], C["mix"][-1]), ("wat", C["wat"][-2], C["wat"][-2])]:
     y0, y1 = bot.get_position().y0, top.get_position().y1
     fig.text(xr, (y0 + y1) / 2, dict(SOLV)[solv], rotation=-90, ha="center",
-             va="center", fontsize=FS_L + 0.5, fontweight="bold", color="0.25")
+             va="center", ma="center", fontsize=FS_L, fontweight="bold", color="0.25",
+             linespacing=1.1)
 
 # ============ panel letters: row-wise, PS then CAT ============
 ORDER = [(A["mix"], n), (A["wat"], n), (BL["mix"], n), (BL["wat"], n),
