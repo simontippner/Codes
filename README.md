@@ -194,7 +194,8 @@ Personal code repository for computational chemistry / data analysis scripts
   above: P(theta|z) heat maps with structure icons, 4 rows (partially/fully
   protonated brush x 50:50 H2O:MeOH / 100% H2O) x 3 planes, one shared magma
   colour scale so mixture and water panels are directly comparable. Panels
-  are lettered a-l (row-major); row conditions go in the caption.
+  are lettered A-L (row-major), partially (A-F) and fully (G-L) protonated
+  rows grouped with a gap; row conditions go in the caption.
 
   ```bash
   python3 md/combined_orientation_v3_both.py   # run in the output folder

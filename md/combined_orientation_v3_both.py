@@ -4,7 +4,7 @@ Combined P(theta | z) orientation heat maps, both brush protonation states and b
 solvents in one figure (same style as ../combined_figure/combined_orientation_v3.py):
     columns = BODIPY dipyrrin-core plane | BODIPY phenyl-ring plane
               | [Mo3S13]2- basal (Mo3) plane
-    rows    = (panels a-l, row-major, letters only; conditions in the caption)
+    rows    = (panels A-L, row-major; rows A-F / G-L grouped by protonation, letters only; conditions in the caption)
               partially prot. 50:50 H2O:MeOH | partially prot. 100% H2O
               | fully prot. 50:50 H2O:MeOH | fully prot. 100% H2O
 
@@ -100,8 +100,18 @@ for ci, C in enumerate(COLS):
 
 vmax = max(np.nanmax(Hn.filled(0)) for Hn, _ in PANELS.values())
 
-fig, axes = plt.subplots(4, 3, figsize=(11.4, 14.6), sharex=True, sharey=True,
-                         gridspec_kw=dict(hspace=0.12, wspace=0.10))
+# two blocks (partially / fully protonated brush), separated by a spacer row
+fig = plt.figure(figsize=(11.4, 15.2))
+gs = fig.add_gridspec(5, 3, height_ratios=[1, 1, 0.12, 1, 1],
+                      hspace=0.12, wspace=0.10)
+axes = np.empty((4, 3), dtype=object)
+for ri, gr in enumerate([0, 1, 3, 4]):
+    for ci in range(3):
+        axes[ri, ci] = fig.add_subplot(gs[gr, ci],
+                                       sharex=axes[0, 0] if ri or ci else None,
+                                       sharey=axes[0, 0] if ri or ci else None)
+for ax in axes.flat:
+    ax.label_outer()
 FS_AX, FS_T, FS_H, FS_P, FS_ROW = 13, 11, 15, 12, 12.5
 
 for ci, C in enumerate(COLS):
@@ -127,10 +137,10 @@ for ci, C in enumerate(COLS):
         if ri == len(ROWS) - 1:
             ax.set_xlabel("angle (deg)", fontsize=FS_AX)
 
-# panel letters a-l (row-major); the row conditions are given in the caption
+# panel letters A-L (row-major); the row conditions are given in the caption
 for ri in range(len(ROWS)):
     for ci in range(len(COLS)):
-        axes[ri, ci].text(3, ZMAX - 3, "abcdefghijkl"[ri * len(COLS) + ci],
+        axes[ri, ci].text(3, ZMAX - 3, "ABCDEFGHIJKL"[ri * len(COLS) + ci],
                           color="w", fontsize=FS_H, fontweight="bold",
                           ha="left", va="top")
 
