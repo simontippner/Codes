@@ -340,6 +340,28 @@ from a job that's still running, since they only read the shared-filesystem
   Example: `python3 setup_qmmm_ensemble.py --system "0% water, buf=exp"
   system.prmtop 04_prod.nc --qm-mask "^1,2" --qm-resmask ":1-11" --n-frames 2000`
 
+- `make_charge_density_cubes.sh` — ground-state electron-density and ESP
+  cubes on ONE common grid with Multiwfn (gbw -> molden via `orca_2mkl`),
+  for charge-density-difference and ESP-mapped plots of a two-fragment ORCA
+  system. Modes: `grid complex.gbw [spacing]` (complex density, defines the
+  grid), `dens frag.gbw out.cub` (fragment density on that grid), `esp
+  complex.gbw out.cub` (total ESP on that grid; ~2 h for 2M points, run via
+  sbatch). ECP cores restored by Multiwfn's EDF so they cancel in Δρ.
+  Compute nodes lack Multiwfn's X/Motif libs: copies live in
+  `/gpfs/data/stippner/lib_multiwfn_compute` and are put on LD_LIBRARY_PATH.
+- `cube_drho.py` — Δρ = ρ_AB − ρ_A − ρ_B from three same-grid cubes;
+  writes the Δρ cube, total displaced charge, and the charge-displacement
+  curve Δq(t) (Belpassi et al. JACS 2008) along the fragment-centroid axis
+  with the CT value at the isodensity boundary (`*_cd.{dat,png,pdf}`).
+  Example: `python3 cube_drho.py complex_dens.cub rubpy_dens.cub
+  mos_dens.cub 61 drho 'Ru(bpy)$_3^{2+}$' 'Mo$_3$S$_{13}^{2-}$'`
+- `render_charge_density.vmd` — headless VMD render of a Δρ cube
+  (accumulation green / depletion purple) or an ESP-mapped ρ = 0.001 a.u.
+  surface (red negative → blue positive), with Mo/S and Ru–N bonds drawn by
+  distance. Feed it on stdin (`vmd -dispdev text -eofexit -args ... <
+  render_charge_density.vmd`); with `-e`, VMD 1.9.3 silently rendered an
+  empty scene.
+
 ## plotting/ — figure-making helpers
 
 - **`sanzo_wada_palette.py`** — browse and export color palettes from Sanzo

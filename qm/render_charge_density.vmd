@@ -1,0 +1,97 @@
+## Headless VMD render of ground-state charge-density plots from the cubes
+## written by make_charge_density_cubes.sh / cube_drho.py.
+##
+## Usage:
+##   vmd -dispdev text -eofexit -args drho drho.cub out.tga [iso] [rotY] [rotX] < render_charge_density.vmd
+##   vmd -dispdev text -eofexit -args esp  dens.cub esp.cub out.tga [vmax] [rotY] [rotX] < render_charge_density.vmd
+##
+## drho: +iso surface (electron accumulation) green, -iso (depletion) purple; default iso 0.001 a.u.
+## esp:  rho = 0.001 a.u. isosurface coloured by ESP, red (negative) -> white -> blue (positive),
+##       scale -vmax..+vmax a.u. (default 0.25)
+## rotY/rotX rotate the view (degrees) after resetview.
+## TachyonInternal writes Targa; convert with tga2png.py.
+## Feed the script on stdin: with -e, VMD 1.9.3 text mode silently stopped
+## after the cube load and rendered nothing.
+proc main {argv} {
+  set mode [lindex $argv 0]
+  if {$mode eq "drho"} {
+    set cube   [lindex $argv 1]
+    set outimg [lindex $argv 2]
+    set iso 0.001; if {[llength $argv] > 3} { set iso [lindex $argv 3] }
+    set ry 0;      if {[llength $argv] > 4} { set ry  [lindex $argv 4] }
+    set rx 0;      if {[llength $argv] > 5} { set rx  [lindex $argv 5] }
+    mol new $cube type cube waitfor all
+  } else {
+    set dcube  [lindex $argv 1]
+    set ecube  [lindex $argv 2]
+    set outimg [lindex $argv 3]
+    set vmax 0.25; if {[llength $argv] > 4} { set vmax [lindex $argv 4] }
+    set ry 0;      if {[llength $argv] > 5} { set ry  [lindex $argv 5] }
+    set rx 0;      if {[llength $argv] > 6} { set rx  [lindex $argv 6] }
+    mol new $dcube type cube waitfor all
+    mol addfile $ecube type cube waitfor all
+  }
+
+  display projection orthographic
+  display depthcue off
+  display shadows off
+  display ambientocclusion off
+  color Display Background white
+  axes location off
+  material change opacity Transparent 0.55
+  material change specular AOChalky 0.2
+
+  # Mo/S bonds are longer than VMD's guessed-bond cutoff: draw them with a
+  # 2.6 A distance cutoff (S-S 2.05, Mo-S 2.4-2.5, excludes Mo-Mo 2.7)
+  mol delrep 0 0
+  mol addrep 0
+  mol modselect 0 0 "not element Mo S"
+  mol modstyle 0 0 CPK 0.6 0.25 20 20
+  mol modmaterial 0 0 AOChalky
+  mol addrep 0
+  mol modselect 1 0 "element Mo S"
+  mol modstyle 1 0 DynamicBonds 2.6 0.13 20
+  mol modmaterial 1 0 AOChalky
+  mol addrep 0
+  mol modselect 2 0 "element Mo S"
+  mol modstyle 2 0 VDW 0.22 20
+  mol modmaterial 2 0 AOChalky
+  # Ru-N bonds
+  mol addrep 0
+  mol modselect 3 0 "element Ru N"
+  mol modstyle 3 0 DynamicBonds 2.2 0.13 20
+  mol modmaterial 3 0 AOChalky
+  color Element Mo cyan3
+  color change rgb 30 0.10 0.62 0.35
+  color change rgb 31 0.60 0.25 0.80
+
+  if {$mode eq "drho"} {
+    mol addrep 0
+    mol modstyle 4 0 Isosurface $iso 0 0 0 1 1
+    mol modcolor 4 0 ColorID 30
+    mol modmaterial 4 0 Transparent
+    mol addrep 0
+    mol modstyle 5 0 Isosurface -$iso 0 0 0 1 1
+    mol modcolor 5 0 ColorID 31
+    mol modmaterial 5 0 Transparent
+  } else {
+    mol addrep 0
+    mol modstyle 4 0 Isosurface 0.001 0 0 0 1 1
+    mol modcolor 4 0 Volume 1
+    mol scaleminmax 0 4 -$vmax $vmax
+    mol modmaterial 4 0 AOChalky
+    color scale method RWB
+  }
+
+  display resize 1800 1400
+  display resetview
+  rotate y by $ry
+  rotate x by $rx
+  scale by 1.5
+  return $outimg
+}
+# render at top level: from inside the proc the scene had not been built yet
+set outimg [main $argv]
+display update
+render TachyonInternal $outimg
+quit
