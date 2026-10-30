@@ -490,3 +490,12 @@ from a job that's still running, since they only read the shared-filesystem
   python3 md/rdf_SI_solvents.py half   # -> rdf_SI_solvents_half.{png,svg,pdf}
   python3 md/rdf_SI_solvents.py full   # -> rdf_SI_solvents_full.{png,svg,pdf}
   ```
+
+- `cell_manuscript_draft_figs.py`: draft figures for the PDMAEMA brush Cell
+  manuscript. `model.pdf` has a dashed red TODO placeholder for the snapshot
+  (panel A) next to the BODIPY and [Mo3S13]2- renders (panel B).
+  `barebrush.pdf` is a placeholder grid for panels A–E. Run it from the
+  manuscript folder: `python3 cell_manuscript_draft_figs.py` writes to `main_figs/`.
+- `latex_biber_build.sh`: runs lualatex, then biber, then lualatex twice on
+  `0main.tex` in its own directory. It prints the number of `!` errors and
+  undefined references from the log.
