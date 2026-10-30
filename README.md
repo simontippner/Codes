@@ -362,6 +362,20 @@ from a job that's still running, since they only read the shared-filesystem
   render_charge_density.vmd`); with `-e`, VMD 1.9.3 silently rendered an
   empty scene.
 
+- `run_cisdp.slurm` — SLURM wrapper for `orca_plot` option 6: unrelaxed
+  TD-DFT difference density of one state as a cube. `sbatch run_cisdp.slurm
+  <dir> <base> <vector> <grid_intervals>`; with TDA false, singlet k is
+  vector 2k−1 (X+Y), and with `Triplets true` the triplets follow the singlets
+  (T1 of a 20-root run = vector 41).
+- `excited_drho_analysis.py` — excited-state counterpart of `cube_drho.py`
+  for those difference cubes: charge-displacement curve at the ground-state
+  isodensity boundary, Δρ over each fragment's ground-state region, the
+  hole/electron centroid distance D, and the potential of Δρ (FFT with 1/r on a
+  2x-coarsened grid) added to the ground-state ESP → `<state>_esp.cub`,
+  `<state>_dV.cub`, `excited_summary.txt`, `excited_cd.{png,pdf}`.
+  Example: `python3 excited_drho_analysis.py ../charge_density 61
+  T1:T1/x.cisdp41.cube S29:S29/x.cisdp57.cube`
+
 ## plotting/ — figure-making helpers
 
 - **`sanzo_wada_palette.py`** — browse and export color palettes from Sanzo
