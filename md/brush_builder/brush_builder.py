@@ -399,7 +399,14 @@ def step_solvate(cfg):
     W_X = [x for a, x in blocks_final if a[0]["res"].strip() == "WAT"]
     write_pdb(out / "cut.pdb", blocks_final, cryst=box)
     tleap_box(cfg, out, "cut.pdb", box)
-    (out / "system.json").write_text(json.dumps({"box": box, "n_chains": len(keep), "n_water": len(W_X),
+    # residue numbers of the grafted (head) units in the topology: chains come first, in order
+    first, r = [], 1
+    for a_, _ in keep:
+        first.append(r); r += len({x["resid"] for x in a_})
+    mask = ":" + ",".join(map(str, first))
+    log(f"restraint mask of the grafted units (keep them on their plane during MD): {mask}")
+    (out / "system.json").write_text(json.dumps({"box": box, "restraint_mask": mask, "n_chains": len(keep),
+                                                 "n_water": len(W_X),
                                                  "n_water_removed_clashes": n_drop,
                                                  "n_ions": len(I_X), "n_water_region": n_w,
                                                  "grafting_density_nm2": len(keep) / (L / 10) ** 2}, indent=1))

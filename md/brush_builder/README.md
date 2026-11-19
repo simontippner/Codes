@@ -8,6 +8,8 @@ Method: S. Tippner, D. Hernández-Castillo, F. H. Schacher, L. González,
 J. Phys. Chem. B **129**, 2105–2114 (2025), https://doi.org/10.1021/acs.jpcb.4c07928.
 This is a rewrite of the scripts used there; the procedure is the same (see *Differences* below).
 
+**Tutorial with images:** [docs/TUTORIAL.md](docs/TUTORIAL.md), step by step through the example.
+
 ## Steps
 
 | Step | Subcommand | What it does |
@@ -46,7 +48,7 @@ from the output folder.
 | `params/` | `*.prepi`, `*.frcmod`, generated `mainchain.*` files |
 | `chains/chain_<i>.pdb`, `chains/sequences.json` | aligned chains and their sequences |
 | `pack/region.pdb`, `pack/central.pdb`, `pack/pack.json` | packed chains with copies, central chains, cell size and grafting density |
-| `solvate/system.prmtop`, `system.inpcrd`, `system.pdb`, `system.json` | the periodic simulation system (box in `system.json`) |
+| `solvate/system.prmtop`, `system.inpcrd`, `system.pdb`, `system.json` | the periodic simulation system; `system.json` holds the box, the numbers of molecules and the restraint mask of the grafted units |
 | `single/chain_<i>/system.prmtop`, ... | single-chain systems |
 
 ## Example: PDMAEMA (`examples/pdmaema`)
@@ -88,6 +90,6 @@ end group kept by the head unit, H cap kept by the tail unit).
 ## Checks
 
 `examples/pdmaema/config_quick.toml` (4 chains of 8 units, tolerance 5 Å, AmberTools 23, PACKMOL 20.4.0):
-residues identical to the published ones; final box 28.0 × 28.0 × 58.0 Å with 4 chains, 16 Cl⁻ and 853 water
-molecules, total charge 0, no heavy atoms of different molecules closer than 2 Å (periodic boundaries included),
+residues identical to the published ones; final box 28.0 × 28.0 × 58.0 Å with 4 chains, 16 Cl⁻ and about 840
+water molecules (PACKMOL uses random seeds), total charge 0, no heavy atoms of different molecules closer than 2 Å (periodic boundaries included),
 water density above the brush 1.01 g/cm³.
