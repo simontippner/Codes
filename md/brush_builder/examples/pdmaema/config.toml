@@ -1,0 +1,47 @@
+# PDMAEMA brush as in J. Phys. Chem. B 129, 2105 (2025): 16 atactic 30-mers, alpha = 0.5 (15 protonated units per
+# chain), grafting density set by the PACKMOL tolerance (2, 5, 10 A gave 0.68, 0.39, 0.21 chains per nm^2).
+# Run:  python3 ../../brush_builder.py config.toml all      (AmberTools and PACKMOL needed; packing can take hours)
+output = "output"
+
+[tools]
+packmol = "packmol"                 # path to the PACKMOL executable (20.x)
+
+# RESP-charged monomers (B3LYP-D3(BJ)/def2-SVP Merz-Kollman ESP, see qm/*.gjf, fitted with antechamber -c resp):
+# key -> residue names H<key> (head), D<key> (middle), T<key> (tail); A and B are the two stereoisomers
+[monomers]
+DA = { ac = "monomers/dda.ac", protonated = false }
+DB = { ac = "monomers/ddb.ac", protonated = false }
+PA = { ac = "monomers/dpa.ac", protonated = true }
+PB = { ac = "monomers/dpb.ac", protonated = true }
+
+# prepgen definitions (atom names of the monomer files): the backbone runs from head_name to tail_name; the head unit
+# keeps the end group (methyl, stand-in for the polystyrene block), the tail unit keeps the H cap
+[residues]
+head_name = "C7"
+tail_name = "C6"
+end_group_atoms = ["C8", "H13", "H14", "H15"]
+cap_atom = "H19"
+pre_head_type = "c3"
+post_tail_type = "c3"
+
+[chains]
+n_chains = 16
+n_units = 30
+alpha = 0.5
+seed = 1
+
+[brush]
+tolerance = 2.0                     # minimum distance between chains (A); sets the grafting density
+anchor_atom = 2                     # atom of the head unit grafted to the plane
+anchor_z = 1.2
+box_step = 0.5                      # (a) smallest box search
+max_attempts = 2                    # (b) attempts per chain before restarting with chain 1
+max_fail = 300                      # (b) failed packings before the region is enlarged
+region_step = 1.0                   # (b) enlargement of the 3 x 3 region (A)
+
+[solvent]
+density = 1.0                       # g/cm3
+shell_xy = 5.0                      # water beyond the polymer laterally (A)
+shell_z = 30.0                      # water above the brush (A)
+counterion = "Cl-"
+shell_single = 30.0                 # water around single chains (step single)

@@ -3,6 +3,17 @@
 Personal code repository for computational chemistry / data analysis scripts
 (MD analysis, QM job setup, plotting, etc.).
 
+## md/brush_builder/ — all-atom polymer brushes for Amber
+
+- **`brush_builder.py`** — builds randomly grafted, atactic polyelectrolyte brushes (PDMAEMA example included) with
+  periodic boundary conditions imposed during the packing: residues (prepgen/parmchk2, GAFF2), random chains
+  (tleap), packing in a 3 x 3 region with periodic copies (PACKMOL), solvation of the whole region and cut to the
+  periodic box (TIP3P, counterions). Method of J. Phys. Chem. B 129, 2105 (2025); one tool and one TOML
+  configuration instead of the original scripts. See `md/brush_builder/README.md`. Usage:
+  ```
+  cd md/brush_builder/examples/pdmaema && python3 ../../brush_builder.py config_quick.toml all
+  ```
+
 ## md/ — AMBER/cpptraj trajectory analysis
 
 - **`pmf_from_pairdist.py`** — approximate CAT...PS binding free energy

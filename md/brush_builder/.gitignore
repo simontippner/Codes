@@ -1,0 +1,4 @@
+# outputs of the examples
+examples/*/output*/
+examples/*/*.log
+__pycache__/
