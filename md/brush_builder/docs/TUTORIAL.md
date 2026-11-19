@@ -1,15 +1,16 @@
 # Tutorial: a PDMAEMA brush from monomers to a periodic simulation box
 
 This tutorial builds the small test brush of `examples/pdmaema/config_quick.toml` (4 chains of 8 units, half of the
-units protonated) and explains every step. The same commands with `config.toml` build the brush of the paper
-(16 chains of 30 units); only the packing takes longer.
+units protonated, 0.5 chains per nm², water) and then the same brush in a water/acetonitrile mixture
+(`config_mixture.toml`). The same commands with `config_paper.toml` build the brush of the paper (16 chains of 30
+units); only the packing takes longer.
 
-The images were made from the output of this run with `docs/make_tutorial_images.py`
-(`python3 make_tutorial_images.py <output folder>` draws them for any run). PACKMOL uses random seeds, so numbers in
-your run will differ slightly.
+The images were made from the output of these runs with `docs/make_tutorial_images.py`
+(`python3 make_tutorial_images.py <output folder> [<image folder>] [<prefix>]` draws them for any run). PACKMOL
+uses random seeds, so numbers in your run will differ slightly.
 
 Colours: chains of the simulation box wine, periodic copies grey, N of protonated units amber, grafted atoms black,
-water blue, Cl⁻ green, central cell or box rose.
+water blue, Cl⁻ green, other solvents dark grey, central cell or box rose.
 
 ---
 
@@ -21,7 +22,7 @@ export PATH=/path/to/packmol-20.4.0:$PATH          # or set [tools] packmol in t
 cd md/brush_builder/examples/pdmaema
 ```
 
-Python ≥ 3.11 with numpy is all the tool needs (`scipy` and `matplotlib` only for the tutorial images).
+Python ≥ 3.11 with numpy and scipy (and matplotlib for the tutorial images).
 
 ## 1. Inputs
 
@@ -45,11 +46,18 @@ tail_name = "C6"               # backbone atom bonded to the next unit
 end_group_atoms = ["C8", "H13", "H14", "H15"]   # methyl end group, kept only by the head unit
 cap_atom = "H19"               # H cap, kept only by the tail unit
 [chains]
-n_chains = 4
 n_units = 8
 alpha = 0.5                    # fraction of protonated units
 [brush]
-tolerance = 5.0                # minimum distance between chains (A): sets the grafting density
+chains_per_box = 4
+grafting_density = 0.5         # chains per nm^2: the box side follows, sqrt(4 / 0.5) nm = 28.3 A
+min_distance = 5.0             # minimum distance between chains during packing (A)
+[solvent]
+water_model = "tip3p"
+layer = 30.0                   # solvent above the brush (A)
+[[solvent.components]]
+name = "water"
+fraction = 100
 ```
 
 ## 2. Step 1: residues (`params`)
@@ -84,8 +92,8 @@ python3 ../../brush_builder.py config_quick.toml chains
 ```
 
 ```
-chain 1: HPB DDB DPA DDA DDB DPA DDB TPB (aligned, 25 A long, 15 A wide)
-chain 2: HDB DDA DDA DPA DPA DPB DDA TPB (aligned, 25 A long, 16 A wide)
+chain 1: HPB DDB DPA DDA DDB DPA DDB TPB (aligned, 25 A long)
+chain 2: HDB DDA DDA DPA DPA DPB DDA TPB (aligned, 25 A long)
 ...
 ```
 
@@ -101,81 +109,127 @@ onto z, the grafted atom (`anchor_atom`, the second atom of the head unit) at th
 python3 ../../brush_builder.py config_quick.toml pack
 ```
 
-**(a) Smallest box.** PACKMOL places all chains upright, with their grafted atoms on the plane `anchor_z`, and
-keeps every pair of chains at least `tolerance` apart. The square box is widened in steps of `box_step` until this
-works:
-
 ```
-pack (a): all chains fit in 24.50 x 24.50 A at tolerance 5.0 A
-```
-
-![smallest box](images/03a_smallest_box.png)
-
-This box knows nothing about periodic boundaries yet: a chain at its left edge could overlap with the periodic
-image of a chain at its right edge.
-
-**(b) Periodic packing.** The chains are packed again in a region of 3 × 3 cells. Each chain is placed with its
-grafted atom inside the central cell, against all chains placed before *and their copies*, and is then copied into
-the 8 neighbouring cells. Only copies that reach to within half a cell of the central cell are kept; the others
-cannot come close to it. So every new chain sees the periodic images of the previous ones, which PACKMOL 20 cannot
-do by itself.
-
-```
-pack (b): region 74.0 A, central cell 24.67 A
-  chain 1/4 placed (3 copies so far, 0 failed packings)
-  chain 2/4 placed (10 copies so far, 0 failed packings)
-  chain 3/4 placed (15 copies so far, 1 failed packings)
-  chain 1/4 placed (3 copies so far, 3 failed packings)      <- chain 4 failed twice: restart with chain 1
+pack: 4 chains at 0.5 nm^-2 -> box 28.28 x 28.28 A
+pack: periodic packing at a minimum distance of 5.00 A
+  chain 1/4 placed (3 copies, 0 failed packings)
   ...
-pack (b): region 75.0 A, central cell 25.00 A               <- max_fail failures: region 1 A larger
-  ...
-pack: 4 chains and 20 copies, cell 28.00 A, grafting density 0.51 nm^-2
+pack: 4 chains and 22 copies, box 28.28 A, grafting density 0.500 nm^-2, minimum distance 5.00 A
 ```
 
-If a chain cannot be placed in `max_attempts` tries, the packing starts again with chain 1 (a different random
-arrangement); after `max_fail` failed packings the region grows by `region_step`. The final central cell is the
-simulation box; its size gives the grafting density.
+The box side follows from the grafting density. The chains are packed in a region of 3 × 3 cells of this size:
+each chain is placed with its grafted atom inside the central cell, against all chains placed before *and their
+copies*, and is then copied into the 8 neighbouring cells. Only copies that reach to within half a cell of the
+central cell are kept; the others cannot come close to it. So every new chain sees the periodic images of the
+previous ones, which PACKMOL 20 cannot do by itself.
 
 ![periodic packing](images/03b_periodic_packing.png)
 
-The copies near the edges of the central cell are what keeps the brush consistent across the periodic boundaries:
-the chain at the top right edge of the central cell (top view) was packed against copies of the chains on the
-opposite side.
+If a chain cannot be placed in `max_attempts` tries, the packing starts again with chain 1 (a different random
+arrangement). After `max_fail` failed packings, `min_distance` is lowered in steps of `min_distance_step`, down to
+`min_distance_floor`. If the density still does not pack, the tool stops:
 
-## 5. Step 4: solvation and the periodic box (`solvate`)
+```
+pack: periodic packing at a minimum distance of 1.75 A
+pack: periodic packing at a minimum distance of 1.50 A
+RuntimeError: 4 chains do not pack at 2.5 nm^-2 with a minimum distance of 1.5 A or more. Lower grafting_density,
+or run without it (densest mode) to find the highest density.
+```
+
+**Densest mode.** Without `grafting_density` (as in `config_paper.toml`), the tool first finds the smallest box
+that holds all chains at `min_distance`, then enlarges the 3 × 3 region by `region_step` after every `max_fail`
+failed packings, as in the paper; the grafting density is then a result.
+
+## 5. Step 4: counterions, solvent and the periodic box (`solvate`)
 
 ```bash
 python3 ../../brush_builder.py config_quick.toml solvate
 ```
 
 ```
-solvation pass 1: 10563 water molecules, 1.250 g/cm3 in the water layer above the solute
-solvation pass 2: 8451 water molecules, 1.007 g/cm3 in the water layer above the solute
-cut: 27 water molecules removed that clashed across the periodic boundaries
+solvent: water 100.0 vol%, mixture density 0.980 g/cm3, water model tip3p; layer 30.0 A above the brush
+counterions: 16 Cl- in the cell, 48 periodic copies around it
+solvent: brush zone 0 to 26.1 A: 360 water (90% of the solvate.tcl estimate); layer to 56.1 A: 755 water
+solvent pass 1: brush zone 360 water; layer 755 water; 0.988 g/cm3 in the layer (target 0.980)
+cut: central cell kept, 46 solvent molecules removed that clashed across the periodic boundaries
 tleap: system.prmtop written, total charge -0.000001
-restraint mask of the grafted units (keep them on their plane during MD): :1,9,17,25
-solvate: box 28.00 x 28.00 x 58.02 A, 4 chains, 836 water, 16 ions
+restraint mask of the grafted units: :1,9,17,25
+solvate: box 28.28 x 28.28 x 58.10 A, 4 chains, 16 ions, 1068 water (100.0 mol%, 100.0 vol%)
 ```
 
-The whole region, copies included, is filled with water: `shell_xy` beyond the polymer laterally and `shell_z`
-above the brush. One Cl⁻ per protonated unit goes into the central cell. The first water count is mass based (box
-volume at the target density minus the solute mass); because the polymer excludes more volume than its mass
-suggests, the water is too dense at first (1.25 g/cm³), and the count is corrected until the free water above the
-brush has the target density.
+**Counterions.** One Cl⁻ per protonated unit is placed in the central cell, against the chains and their copies,
+and the ions are copied into the neighbouring cells like the chains. So the ions, too, see their periodic
+neighbours.
 
-![solvated region](images/04a_solvated_region.png)
+**Solvent.** The central cell is filled around the chains, the ions and all copies, in two zones:
 
-Then everything outside the central cell is removed (the rose lines mark the cut): the copies, and every water
-molecule whose O lies outside. Water molecules near opposite faces of the box may now overlap across the periodic
-boundary (the water of the neighbouring cells was not a copy of the central cell); those closer than 2 Å to another
-molecule are removed. `tleap` writes the periodic system with GAFF2 and TIP3P:
+- the **brush zone** (from the grafting plane to the top of the chains) gets the amount of the rule of PACKMOL's
+  `solvate.tcl`: target density × volume minus the polymer mass (90 % of it to start, lowered if PACKMOL cannot
+  place it). For a PDMAEMA brush this gives about 0.7 g/cm³ of water next to 0.3 g/cm³ of polymer;
+- the **layer** above is filled to the target density, which is measured and corrected (within 3 %).
+
+![solvated cell](images/04a_solvated_region.png)
+
+Solvent molecules near opposite faces of the cell can overlap across the periodic boundary (the solvent of the
+neighbouring cells is not a copy of the central cell); those closer than 2 Å to another molecule are removed, and
+the box gets a gap of 2 Å at the top. `tleap` writes the periodic system:
 
 ![final box](images/04b_final_box.png)
 
 Output in `output_quick/solvate/`: `system.prmtop`, `system.inpcrd`, `system.pdb`, and `system.json` with the box,
-the numbers of molecules and the restraint mask.
+the restraint mask and the solvent composition.
 
-## 6. Running the MD
+## 6. The same brush in a solvent mixture
+
+`config_mixture.toml` uses the same brush in water (flexible SPC/Fw) with 5 vol% acetonitrile:
+
+```toml
+[solvent]
+water_model = "spcfw"
+mode = "volume"                # fractions as vol% ("volume") or mole fractions ("mole")
+
+[[solvent.components]]
+name = "water"
+fraction = 95
+
+[[solvent.components]]
+name = "acetonitrile"
+fraction = 5
+density = 0.786                # density of the pure liquid (g/cm3)
+structure = "solvents/acetonitrile/acn.pdb"
+params = ["solvents/acetonitrile/acn.prepi", "solvents/acetonitrile/acn.frcmod"]
+```
+
+Water needs only its name and fraction (the model is `water_model`); every other solvent needs a one-molecule
+structure with the residue and atom names of its parameters, the residue file and the `frcmod`, and its density.
+With vol%, the numbers of molecules follow from nᵢ ∝ φᵢ ρᵢ / Mᵢ; the mixture density is that of ideal mixing
+(or `density_mix`, if you know the measured value).
+
+```bash
+python3 ../../brush_builder.py config_mixture.toml all
+```
+
+```
+solvent: water 95.0 vol%, acetonitrile 5.0 vol%, mixture density 0.999 g/cm3, water model spcfw
+solvent pass 1: brush zone 358 water, 6 acetonitrile; layer 739 water, 13 acetonitrile; 0.971 g/cm3 in the layer
+cut: central cell kept, 59 solvent molecules removed that clashed across the periodic boundaries
+composition: 1 surplus solvent molecules removed from the top of the box to restore the ratio
+solvate: box 28.28 x 28.28 x 58.10 A, 4 chains, 16 ions, 1037 water (98.3 mol%, 95.2 vol%),
+         18 acetonitrile (1.7 mol%, 4.8 vol%)
+```
+
+Both zones get the same composition. Of two solvent molecules that clash, the one of the more abundant component
+is removed, so the clashes hardly change the composition; any remaining surplus is removed from the top of the box
+(at most 5 % of a component). Small boxes give the composition only to whole molecules (here 4.8 instead of 5 vol%).
+
+![mixture, solvated cell](images/mixture_04a_solvated_region.png)
+
+![mixture, final box](images/mixture_04b_final_box.png)
+
+A mixture by mole fraction is set the same way with `mode = "mole"`, see `config_methanol.toml` (water/methanol,
+50 mol% each).
+
+## 7. Running the MD
 
 The grafted units stand for the attachment to the polystyrene wall and are kept on their plane with a positional
 restraint (10 kcal mol⁻¹ Å⁻² in the paper). The mask is in `system.json`. A minimisation with the brush restrained:
@@ -194,27 +248,32 @@ pmemd -O -i min.in -p system.prmtop -c system.inpcrd -ref system.inpcrd -r min.n
 ```
 
 Keep `ntr=1` with the same mask in heating, equilibration and production (constant pressure, `ntb=2`, `ntp=1`), as
-in the paper.
+in the paper. With `water_model = "spcfw"`, do not constrain the water bonds (no SHAKE on water, shorter time step).
 
-## 7. Adapting the model
+## 8. Adapting the model
 
 | Change | Where |
 |---|---|
-| grafting density | `[brush] tolerance` (larger tolerance, sparser brush; 2, 5 and 10 Å gave 0.68, 0.39 and 0.21 nm⁻² for 16 × 30-mers) |
-| chain length, number of chains, protonation degree | `[chains] n_units`, `n_chains`, `alpha` |
+| grafting density, chains per box | `[brush] grafting_density`, `chains_per_box` |
+| densest packing as in the paper | omit `grafting_density`; `min_distance` (2, 5 and 10 Å gave 0.68, 0.39 and 0.21 nm⁻² for 16 × 30-mers) |
+| chain length, protonation degree | `[chains] n_units`, `alpha` |
 | reproducible sequences | `[chains] seed` |
-| water above the brush, lateral shell | `[solvent] shell_z`, `shell_xy` |
+| solvent above the brush | `[solvent] layer` (Å or `"auto"` = max(30 Å, half the brush height)) |
+| water model | `[solvent] water_model` (`tip3p`, `spce`, `opc`, `spcfw`) |
+| solvent mixture | `[solvent] mode` and one `[[solvent.components]]` table per component |
 | counterion | `[solvent] counterion` (residue and atom name, e.g. `"Cl-"`, `"Na+"`) |
 | other monomer | new antechamber files in `[monomers]` and their atom names in `[residues]` |
-| single chains in water | `python3 ../../brush_builder.py config.toml single` (shell `shell_single`) |
+| single chains in the same solvent | `python3 ../../brush_builder.py config.toml single` (shell `shell_single`) |
 
-## 8. Troubleshooting
+## 9. Troubleshooting
 
-- **The packing (step 3b) takes very long.** It is a random search: with dense brushes most attempts fail and the
-  region grows only after `max_fail` failures. A larger `tolerance` gives a sparser brush and packs faster; a smaller
-  `max_fail` lets the region grow sooner (at the cost of a lower grafting density than the densest possible).
+- **The packing (step 3) takes very long or stops.** It is a random search: at high densities most attempts fail.
+  A lower `grafting_density` (or a larger `min_distance` in the densest mode) packs faster; `max_fail` sets how
+  long it tries before the minimum distance is lowered.
+- **PACKMOL cannot place the solvent.** The brush zone is lowered automatically; if it still fails, lower
+  `brush_fill` (default 0.9).
 - **PACKMOL is not found.** Set `[tools] packmol` to the full path of the executable.
-- **tleap reports unknown residues or atoms.** Check that the atom names in `[residues]` exist in the monomer files
-  and that `prepgen` ran without errors (`output/params/`).
+- **tleap reports unknown residues or atoms.** Check that the atom names in `[residues]` exist in the monomer files,
+  and that the residue and atom names of a solvent structure match its residue file.
 - **Re-running a step.** Each step reads the output of the previous one; delete its output folder
-  (e.g. `output_quick/pack`) and run the step again.
+  (e.g. `output_quick/solvate`) and run the step again.

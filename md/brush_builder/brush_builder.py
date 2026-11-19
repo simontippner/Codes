@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """brush_builder: all-atom models of randomly grafted, atactic polyelectrolyte brushes for Amber, with periodic
-boundary conditions imposed during the packing.
+boundary conditions imposed during the packing, in water or solvent mixtures.
 
 Method of S. Tippner, D. Hernandez-Castillo, F. H. Schacher, L. Gonzalez, J. Phys. Chem. B 129, 2105 (2025)
 (PDMAEMA brushes); this is a rewrite of the original collection of bash and Python scripts as one tool.
@@ -8,43 +8,51 @@ Method of S. Tippner, D. Hernandez-Castillo, F. H. Schacher, L. Gonzalez, J. Phy
 Steps (each a subcommand; "all" runs 1 to 4, "single" is optional):
   1 params   residues for every monomer type (head, middle and tail unit, from a RESP-charged antechamber file) with
              prepgen and GAFF2 parameters with parmchk2
-  2 chains   n_chains random sequences with a fixed number of protonated units and random stereochemistry, built
-             with tleap and aligned along z (longest axis onto z, grafted unit at the bottom, lowest atom at z = 0)
-  3 pack     (a) smallest square box in which PACKMOL places all chains upright at the given tolerance (the minimum
-             distance between chains, which sets the grafting density), widened in steps of box_step;
-             (b) packing with periodic boundaries in a region of 3 x 3 cells: every chain is placed with its grafted
-             atom on the plane z = anchor_z inside the central cell, against all chains placed before and their
-             copies, and is then copied into the 8 neighbouring cells (copies kept if any atom lies within half a cell
-             of the central cell). After max_attempts failures for one chain the packing restarts with chain 1;
-             after max_fail failed packings the region is enlarged by region_step and packing starts again.
-  4 solvate  the whole region, copies included, is filled with water (shell_xy beyond the polymer laterally,
-             shell_z above it) and counterions are added to the central cell; then the copies and all water outside
-             the central cell are removed and tleap writes the Amber topology (GAFF2, TIP3P) of the periodic box.
-  5 single   (optional) every chain solvated on its own with counterions, as reference systems
+  2 chains   chains_per_box random sequences with a fixed number of protonated units and random stereochemistry,
+             built with tleap and aligned along z (longest axis onto z, grafted unit at the bottom)
+  3 pack     the box side L follows from grafting_density and chains_per_box (L = sqrt(chains / density)); without
+             grafting_density, the densest packing at min_distance is searched as in the paper (smallest box first).
+             Packing with periodic boundaries in a region of 3 x 3 cells: every chain is placed with its grafted atom
+             on the plane z = anchor_z inside the central cell, against all chains placed before and their copies, and
+             is then copied into the 8 neighbouring cells (copies kept if any atom lies within half a cell of the
+             central cell). After max_attempts failures for one chain the packing restarts with chain 1; after
+             max_fail failed packings min_distance is lowered (fixed density) or the region enlarged (densest mode).
+  4 solvate  counterions are placed in the central cell against the chains and their copies and are copied into the
+             neighbouring cells as well; then the central cell is filled with the solvent (water or a mixture by
+             volume or mole fraction) around the chains, the ions and their copies, with the layer above the brush; the number of molecules follows
+             from the density, corrected until the free solvent above the brush has the target density. The cell is
+             cut out, molecules clashing across the periodic boundaries removed, and tleap writes the topology.
+  5 single   (optional) every chain in the same solvent on its own, with its counterions, as reference systems
 
-Requirements: Python >= 3.11 with numpy; AmberTools (prepgen, parmchk2, tleap) on PATH; PACKMOL (path in the
-config or on PATH).  Usage:  brush_builder.py <config.toml> {params,chains,pack,solvate,all,single}
+Requirements: Python >= 3.11 with numpy and scipy; AmberTools (prepgen, parmchk2, tleap) on PATH; PACKMOL 20.x.
+Usage:  brush_builder.py <config.toml> {params,chains,pack,solvate,all,single}
 """
 import argparse
 import json
 import math
-import os
 import random
 import re
 import shutil
 import subprocess
-import sys
 import tomllib
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 AMU_PER_A3 = 0.602214            # g/cm3 -> amu/A3
-M_WATER = 18.015
+MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "S": 32.06, "P": 30.974, "F": 18.998, "Cl": 35.45,
+        "Na": 22.99, "K": 39.098, "Br": 79.904, "I": 126.90}
 WATER_PDB = ("HETATM    1  O   WAT     1       0.000   0.000   0.000\n"
              "HETATM    2  H1  WAT     1       0.957   0.000   0.000\n"
              "HETATM    3  H2  WAT     1      -0.240   0.927   0.000\nEND\n")
-MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "S": 32.06, "Cl": 35.45, "Na": 22.99}
+WATER_MODELS = {                 # tleap commands for the built-in water models (each also loads its ion parameters)
+    "tip3p": ["source leaprc.water.tip3p"],
+    "spce": ["source leaprc.water.spce"],
+    "opc": ["source leaprc.water.opc"],
+    "spcfw": ["source leaprc.water.spce", "WAT = SPF", "loadamberparams frcmod.spcfw", "set default FlexibleWater on"],
+}
+WATER_DENSITY = {"tip3p": 0.98, "spce": 0.997, "opc": 0.997, "spcfw": 1.01}   # densities of the models at 298 K
 
 
 # ------------------------------------------------------------------ helpers
@@ -52,32 +60,29 @@ def log(msg):
     print(f"[brush_builder] {msg}", flush=True)
 
 
-def run(cmd, cwd, stdin=None):
+def run(cmd, cwd):
     """run a program in cwd, return stdout; raise with its output on failure"""
-    r = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True, text=True)
+    r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"{' '.join(map(str, cmd))} failed in {cwd}:\n{r.stdout[-2000:]}\n{r.stderr[-2000:]}")
     return r.stdout
 
 
 def packmol(cfg, inp, cwd):
-    """run PACKMOL with input text; True if it reports success"""
+    """run PACKMOL on the input text (written to packmol.inp and read as packmol < packmol.inp); True on success"""
     (cwd / "packmol.inp").write_text(inp)
-    with open(cwd / "packmol.inp") as f:                        # as packmol < packmol.inp (a pipe is not read)
+    with open(cwd / "packmol.inp") as f:
         r = subprocess.run([cfg["tools"]["packmol"]], cwd=cwd, stdin=f, capture_output=True, text=True)
     (cwd / "packmol.log").write_text(r.stdout + r.stderr)
     return "Success!" in r.stdout
 
 
 def read_pdb(path):
-    """atoms as list of dicts (record, name, resname, chain, resid, xyz) and coordinates array"""
-    atoms = []
-    for line in Path(path).read_text().splitlines():
-        if line.startswith(("ATOM", "HETATM")):
-            atoms.append(dict(rec=line[:6], name=line[12:16], res=line[17:20] + " ", chain=line[21],
-                              resid=line[22:26], tail=line[54:]))
-    X = np.array([[float(l[30:38]), float(l[38:46]), float(l[46:54])]
-                  for l in Path(path).read_text().splitlines() if l.startswith(("ATOM", "HETATM"))])
+    """atoms (record, name, residue, chain, residue number, rest of line) and coordinates"""
+    lines = [l for l in Path(path).read_text().splitlines() if l.startswith(("ATOM", "HETATM"))]
+    atoms = [dict(rec=l[:6], name=l[12:16], res=l[17:20] + " ", chain=l[21], resid=l[22:26], tail=l[54:])
+             for l in lines]
+    X = np.array([[float(l[30:38]), float(l[38:46]), float(l[46:54])] for l in lines]).reshape(-1, 3)
     return atoms, X
 
 
@@ -95,13 +100,17 @@ def write_pdb(path, blocks, cryst=None):
     Path(path).write_text("\n".join(out) + "\n")
 
 
+ION_ELEMENT = {"CL-": "Cl", "CL": "Cl", "NA+": "Na", "NA": "Na", "K+": "K", "BR-": "Br", "I-": "I"}
+
+
 def element(name):
+    """element from a PDB atom name: monatomic ions by their names, otherwise the first letter"""
     n = name.strip()
-    return "Cl" if n.upper().startswith("CL") else n[0]
+    return ION_ELEMENT.get(n.upper(), n[0].upper())
 
 
 def mass(atoms):
-    return sum(MASS.get(element(a["name"]), 12.0) for a in atoms)
+    return sum(MASS.get(element(a["name"]), 12.011) for a in atoms)
 
 
 def load_config(path):
@@ -109,6 +118,13 @@ def load_config(path):
     cfg["_dir"] = Path(path).resolve().parent
     cfg["_out"] = (cfg["_dir"] / cfg.get("output", "output")).resolve()
     cfg.setdefault("tools", {}).setdefault("packmol", shutil.which("packmol") or "packmol")
+    b = cfg["brush"]
+    b.setdefault("min_distance", b.get("tolerance", 2.0))         # "tolerance" accepted from version 1 configs
+    b.setdefault("chains_per_box", cfg.get("chains", {}).get("n_chains"))
+    s = cfg.setdefault("solvent", {})
+    s.setdefault("water_model", "tip3p"); s.setdefault("mode", "volume"); s.setdefault("margin", 0.0)
+    s.setdefault("layer", s.get("shell_z", 30.0)); s.setdefault("counterion", "Cl-")
+    s.setdefault("components", [{"name": "water", "fraction": 100}])
     return cfg
 
 
@@ -140,9 +156,16 @@ def step_params(cfg):
     log(f"params: {3 * len(cfg['monomers'])} residues in {out}")
 
 
-def leap_header(cfg, water=False):
+def leap_header(cfg, solvent=False):
     p = cfg["_out"] / "params"
-    lines = ["source leaprc.gaff2"] + (["source leaprc.water.tip3p"] if water else [])
+    lines = ["source leaprc.gaff2"]
+    if solvent:
+        lines += WATER_MODELS[cfg["solvent"]["water_model"]]
+        for c in cfg["solvent"]["components"]:
+            for f in c.get("params", []):
+                f = (cfg["_dir"] / f).resolve()
+                lines.append({".prepi": "loadamberprep", ".prep": "loadamberprep", ".lib": "loadoff",
+                              ".off": "loadoff", ".frcmod": "loadamberparams"}[f.suffix] + f" {f}")
     for key in cfg["monomers"]:
         for rn in residue_names(key).values():
             lines += [f"loadamberprep {p / (rn.lower() + '.prepi')}", f"loadamberparams {p / (rn.lower() + '.frcmod')}"]
@@ -158,26 +181,25 @@ def sequence(cfg, rng):
     is_p = [True] * n_p + [False] * (n - n_p)
     rng.shuffle(is_p)
     keys = [rng.choice(prot if p else neut) for p in is_p]
-    names = [("H" if i == 0 else "T" if i == n - 1 else "D") + k for i, k in enumerate(keys)]
-    return names
+    return [("H" if i == 0 else "T" if i == n - 1 else "D") + k for i, k in enumerate(keys)]
 
 
 def step_chains(cfg):
     out = cfg["_out"] / "chains"; out.mkdir(parents=True, exist_ok=True)
-    c = cfg["chains"]; b = cfg["brush"]
-    rng = random.Random(c.get("seed"))
+    b = cfg["brush"]
+    rng = random.Random(cfg["chains"].get("seed"))
     seqs = []
-    for i in range(1, c["n_chains"] + 1):
+    for i in range(1, b["chains_per_box"] + 1):
         d = out / f"chain_{i}"; d.mkdir(exist_ok=True)
         seq = sequence(cfg, rng); seqs.append(seq)
         (d / "tleap.in").write_text(leap_header(cfg) + f"mol = sequence {{ {' '.join(seq)} }}\n"
-                                    f"savepdb mol built.pdb\nquit\n")
+                                    "savepdb mol built.pdb\nquit\n")
         run(["tleap", "-f", "tleap.in"], d)
         # align along z: PACKMOL moves molecules only as rigid bodies, so fitting the chain into a narrow, tall box
         # (as in the original scripts) is a rotation of its longest axis onto z; done here directly
         atoms, X = read_pdb(d / "built.pdb")
         C = X - X.mean(0)
-        w, v = np.linalg.eigh(np.cov(C.T))
+        v = np.linalg.eigh(np.cov(C.T))[1]
         Rm = v[:, ::-1][:, [1, 2, 0]]                               # longest axis -> z
         if np.linalg.det(Rm) < 0:
             Rm[:, 0] *= -1
@@ -186,152 +208,221 @@ def step_chains(cfg):
             X[:, 1:] *= -1
         X[:, 2] -= X[:, 2].min()                                    # lowest atom on z = 0
         write_pdb(out / f"chain_{i}.pdb", [(atoms, X)])
-        w = np.ptp(X[:, :2], 0).max()
-        log(f"chain {i}: {' '.join(seq)} (aligned, {np.ptp(X[:, 2]):.0f} A long, {w:.0f} A wide)")
+        log(f"chain {i}: {' '.join(seq)} (aligned, {np.ptp(X[:, 2]):.0f} A long)")
     (out / "sequences.json").write_text(json.dumps(seqs, indent=1))
 
 
 # ------------------------------------------------------------------ 3 pack
 def chain_files(cfg):
-    return [cfg["_out"] / "chains" / f"chain_{i}.pdb" for i in range(1, cfg["chains"]["n_chains"] + 1)]
+    return [cfg["_out"] / "chains" / f"chain_{i}.pdb" for i in range(1, cfg["brush"]["chains_per_box"] + 1)]
 
 
-def upright(path, box, anchor, z_a, height):
+def upright(path, plane, region, z_a, height, atom):
     """PACKMOL structure block: chain upright (rotations about x and y fixed), grafted atom on the plane z_a"""
-    x0, y0, x1, y1 = box
-    return (f"structure {path}\n  number 1\n  inside box {anchor[0]:.3f} {anchor[1]:.3f} 0. {anchor[2]:.3f} "
-            f"{anchor[3]:.3f} {height:.3f}\n  constrain_rotation x 0. 0.\n  constrain_rotation y 0. 0.\n"
-            f"  atoms {{atom}}\n    inside box {x0:.3f} {y0:.3f} {z_a:.3f} {x1:.3f} {y1:.3f} {z_a:.3f}\n"
+    x0, y0, x1, y1 = plane
+    return (f"structure {path}\n  number 1\n  inside box {region[0]:.3f} {region[1]:.3f} 0. {region[2]:.3f} "
+            f"{region[3]:.3f} {height:.3f}\n  constrain_rotation x 0. 0.\n  constrain_rotation y 0. 0.\n"
+            f"  atoms {atom}\n    inside box {x0:.3f} {y0:.3f} {z_a:.3f} {x1:.3f} {y1:.3f} {z_a:.3f}\n"
             f"  end atoms\nend structure\n")
 
 
-def smallest_box(cfg, files, d):
-    """(a) smallest square box holding all chains upright at the tolerance, widened in steps of box_step"""
-    b = cfg["brush"]; tol = b["tolerance"]
-    height = max(read_pdb(f)[1][:, 2].max() for f in files) + 4.0
+def smallest_box(cfg, files, d, height):
+    """densest mode: smallest square box holding all chains upright at min_distance, widened by box_step"""
+    b = cfg["brush"]; tol = b["min_distance"]
     L = b.get("box_start", math.sqrt(len(files)) * (tol + 4.0))
     while True:
-        body = "".join(upright(f, (0, 0, L, L), (0, 0, L, L), b["anchor_z"], height).replace("{atom}", str(b["anchor_atom"]))
-                       for f in files)
+        body = "".join(upright(f, (0, 0, L, L), (0, 0, L, L), b["anchor_z"], height, b["anchor_atom"]) for f in files)
         if packmol(cfg, f"tolerance {tol}\nfiletype pdb\noutput box.pdb\nnloop 20\nmaxit 20\nadd_amber_ter\n{body}", d):
-            log(f"pack (a): all chains fit in {L:.2f} x {L:.2f} A at tolerance {tol} A")
-            return L, height
-        L += b["box_step"]
+            log(f"pack (a): all chains fit in {L:.2f} x {L:.2f} A at {tol} A")
+            return L
+        L += b.get("box_step", 0.5)
 
 
-def copies(atoms, X, L, R):
-    """copies of a chain in the 8 neighbouring cells, kept if any atom lies within half a cell of the central cell"""
+def copies(X, L, keep):
+    """copies of X in the 8 neighbouring cells of the central cell [L, 2L]^2 that have an atom within `keep` of it"""
     out = []
     for i in (-1, 0, 1):
         for j in (-1, 0, 1):
             if i == j == 0:
                 continue
             Y = X + [i * L, j * L, 0]
-            inside = (Y[:, 0] > 0.5 * L) & (Y[:, 0] < 2.5 * L) & (Y[:, 1] > 0.5 * L) & (Y[:, 1] < 2.5 * L)
-            if inside.any():
+            near = (Y[:, 0] > L - keep) & (Y[:, 0] < 2 * L + keep) & (Y[:, 1] > L - keep) & (Y[:, 1] < 2 * L + keep)
+            if near.any():
                 out.append(Y)
     return out
 
 
+def periodic_pack(cfg, files, L, tol, height, d):
+    """pack all chains with periodic copies at cell size L; returns (central, copies) or None after max_fail failures"""
+    b = cfg["brush"]; R = 3 * L; fails = 0
+    while fails < b["max_fail"]:
+        central, copies_all, i, attempts = [], [], 0, 0
+        while i < len(files):
+            fixed = ""
+            if central:
+                write_pdb(d / "fixed.pdb", [(a, X) for a, X in central] + [(a, Y) for a, Y, _ in copies_all])
+                fixed = "structure fixed.pdb\n  number 1\n  fixed 0. 0. 0. 0. 0. 0.\nend structure\n"
+            new = upright(files[i], (L, L, 2 * L, 2 * L), (0, 0, R, R), b["anchor_z"], height, b["anchor_atom"])
+            if not packmol(cfg, f"tolerance {tol}\nfiletype pdb\noutput placed.pdb\nnloop 20\nmaxit 20\n"
+                                f"add_amber_ter\nseed -1\n{fixed}{new}", d):
+                fails += 1; attempts += 1
+                if fails >= b["max_fail"]:
+                    return None
+                if attempts >= b["max_attempts"]:                  # restart from the first chain
+                    central, copies_all, i, attempts = [], [], 0, 0
+                continue
+            atoms_new, _ = read_pdb(files[i]); Xall = read_pdb(d / "placed.pdb")[1]
+            Xn = Xall[-len(atoms_new):]                            # the new chain is the last molecule of the output
+            central.append((atoms_new, Xn))
+            copies_all += [(atoms_new, Y, i) for Y in copies(Xn, L, 0.5 * L)]
+            log(f"  chain {i + 1}/{len(files)} placed ({len(copies_all)} copies, {fails} failed packings)")
+            i += 1; attempts = 0
+        return central, copies_all
+    return None
+
+
 def step_pack(cfg):
     out = cfg["_out"] / "pack"; out.mkdir(parents=True, exist_ok=True)
-    b = cfg["brush"]; files = chain_files(cfg)
-    L0, height = smallest_box(cfg, files, out)
-    R = math.ceil(3 * L0) if "region_start" not in b else b["region_start"]
-    while True:                                            # (b) periodic packing, region enlarged after max_fail
-        L = R / 3; fails = 0; placed = None
-        log(f"pack (b): region {R:.1f} A, central cell {L:.2f} A")
-        while fails < b["max_fail"]:
-            central, copies_all, i, attempts = [], [], 0, 0
-            while i < len(files):
-                d = out / "work"; d.mkdir(exist_ok=True)
-                fixed = ""
-                if central:
-                    write_pdb(d / "fixed.pdb", [(a, X) for a, X in central] + [(a, Y) for a, Y, _ in copies_all])
-                    fixed = "structure fixed.pdb\n  number 1\n  fixed 0. 0. 0. 0. 0. 0.\nend structure\n"
-                new = upright(files[i], (L, L, 2 * L, 2 * L), (0, 0, R, R), b["anchor_z"], height)
-                ok = packmol(cfg, f"tolerance {b['tolerance']}\nfiletype pdb\noutput placed.pdb\nnloop 20\nmaxit 20\n"
-                                  f"add_amber_ter\nseed -1\n{fixed}{new.replace('{atom}', str(b['anchor_atom']))}", d)
-                if not ok:
-                    fails += 1; attempts += 1
-                    if fails >= b["max_fail"]:
-                        break
-                    if attempts >= b["max_attempts"]:        # restart from the first chain
-                        central, copies_all, i, attempts = [], [], 0, 0
-                    continue
-                atoms_new, _ = read_pdb(files[i]); _, Xall = read_pdb(d / "placed.pdb")
-                Xn = Xall[-len(atoms_new):]                 # the new chain is the last molecule of the output
-                central.append((atoms_new, Xn))
-                copies_all += [(atoms_new, Y, i) for Y in copies(atoms_new, Xn, L, R)]
-                log(f"  chain {i + 1}/{len(files)} placed ({len(copies_all)} copies so far, {fails} failed packings)")
-                i += 1; attempts = 0
-            if i == len(files):
-                placed = (central, copies_all); break
-        if placed:
-            break
-        R += b["region_step"]
+    work = out / "work"; work.mkdir(exist_ok=True)
+    b = cfg["brush"]; files = chain_files(cfg); n = len(files)
+    height = max(read_pdb(f)[1][:, 2].max() for f in files) + 4.0
+    tol = b["min_distance"]
+    if b.get("grafting_density"):                                 # fixed density: box from chains and density
+        L = 10.0 * math.sqrt(n / b["grafting_density"])
+        floor, step = b.get("min_distance_floor", 1.5), b.get("min_distance_step", 0.25)
+        log(f"pack: {n} chains at {b['grafting_density']} nm^-2 -> box {L:.2f} x {L:.2f} A")
+        while True:
+            log(f"pack: periodic packing at a minimum distance of {tol:.2f} A")
+            placed = periodic_pack(cfg, files, L, tol, height, work)
+            if placed:
+                break
+            tol = round(tol - step, 3)
+            if tol < floor - 1e-9:
+                raise RuntimeError(
+                    f"{n} chains do not pack at {b['grafting_density']} nm^-2 with a minimum distance of {floor} A or "
+                    f"more. Lower grafting_density, or run without it (densest mode) to find the highest density.")
+    else:                                                         # densest mode, as in the paper
+        L = L_small = smallest_box(cfg, files, out, height)
+        R = b.get("region_start", math.ceil(3 * L))
+        while True:
+            log(f"pack: region {R:.1f} A, cell {R / 3:.2f} A")
+            placed = periodic_pack(cfg, files, R / 3, tol, height, work)
+            if placed:
+                L = R / 3; break
+            R += b.get("region_step", 1.0)
     central, copies_all = placed
     write_pdb(out / "region.pdb", [(a, X) for a, X in central] + [(a, Y) for a, Y, _ in copies_all])
     write_pdb(out / "central.pdb", central)
-    (out / "pack.json").write_text(json.dumps({"region": R, "cell": R / 3, "smallest_box": L0, "height": height,
-                                               "n_central": len(central), "n_copies": len(copies_all),
-                                               "block_chain": list(range(len(central))) + [c for _, _, c in copies_all],
-                                               "grafting_density_nm2": len(central) / (R / 3 / 10) ** 2}, indent=1))
-    log(f"pack: {len(central)} chains and {len(copies_all)} copies, cell {R / 3:.2f} A, "
-        f"grafting density {len(central) / (R / 30) ** 2:.2f} nm^-2")
+    (out / "pack.json").write_text(json.dumps({
+        "cell": L, "region": 3 * L, "height": height, "min_distance": tol, "n_central": len(central),
+        "n_copies": len(copies_all), "block_chain": list(range(len(central))) + [c for _, _, c in copies_all],
+        "grafting_density_nm2": len(central) / (L / 10) ** 2,
+        **({} if b.get("grafting_density") else {"smallest_box": L_small})}, indent=1))
+    log(f"pack: {len(central)} chains and {len(copies_all)} copies, box {L:.2f} A, "
+        f"grafting density {len(central) / (L / 10) ** 2:.3f} nm^-2, minimum distance {tol:.2f} A")
 
 
 # ------------------------------------------------------------------ 4 solvate
+def components(cfg, d):
+    """solvent components: template file, atom count, molar mass, pure density and the relative number of molecules
+    per composition unit (from vol% via n ~ phi rho / M, or from mole fractions)"""
+    s = cfg["solvent"]; comps = []
+    for c in s["components"]:
+        if c["name"] == "water":
+            (d / "water.pdb").write_text(WATER_PDB)
+            pdb, rho = d / "water.pdb", c.get("density", WATER_DENSITY[s["water_model"]])
+        else:
+            pdb, rho = (cfg["_dir"] / c["structure"]).resolve(), c["density"]
+        atoms, X = read_pdb(pdb)
+        M = mass(atoms)
+        comps.append(dict(name=c["name"], pdb=pdb, n_atoms=len(atoms), M=M, rho=rho, f=c["fraction"],
+                          res=atoms[0]["res"].strip()))
+    tot = sum(c["f"] for c in comps)
+    for c in comps:
+        c["f"] /= tot
+        c["unit"] = c["f"] * c["rho"] / c["M"] if s["mode"] == "volume" else c["f"]
+    # density of the mixture: ideal mixing of volumes (or given)
+    v = sum(c["unit"] * c["M"] / c["rho"] for c in comps); m = sum(c["unit"] * c["M"] for c in comps)
+    s["_rho_mix"] = s.get("density_mix", m / v)
+    return comps
+
+
+def counts(comps, mass_target):
+    """molecules per component for a total solvent mass (amu), keeping the composition"""
+    m_unit = sum(c["unit"] * c["M"] for c in comps)
+    return [max(1, round(c["unit"] * mass_target / m_unit)) for c in comps]
+
+
 def ion_pdb(name, d):
-    p = d / f"{name.replace('-', 'm').replace('+', 'p')}.pdb"
-    p.write_text(f"HETATM    1 {name:<4}{name:>4}     1       0.000   0.000   0.000\nEND\n")
-    return p.name
+    p = d / "ion.pdb"
+    p.write_text(f"HETATM    1 {name:<4} {name:<3} X   1       0.000   0.000   0.000\nEND\n")
+    return p
 
 
-def solvate_box(cfg, d, solute_blocks, region_xy, n_ion, ion_box, top_z):
-    """fill region_xy x [0, top_z] with water around the fixed solute and n_ion counterions inside ion_box.
-    The first water count is mass based (box volume at the target density minus the solute mass, as solvate.tcl of
-    PACKMOL); as the solute excludes more volume than its mass suggests, the count is then corrected until the density
-    of the free water layer above the solute is within 3% of the target (at most 3 passes). Returns the PACKMOL
-    output path and the number of water molecules."""
-    s = cfg["solvent"]
-    write_pdb(d / "solute.pdb", solute_blocks)
-    (d / "water.pdb").write_text(WATER_PDB)
-    ion = ion_pdb(s["counterion"], d)
-    x0, y0, x1, y1 = region_xy
+def fill(cfg, d, fixed_blocks, box, comps, z_free):
+    """fill box (x0, y0, x1, y1, top) with the solvent components around the fixed blocks, in two zones:
+      brush zone (0 to z_free): solvent mass = target density x zone volume - mass of the fixed molecules in it (the
+        rule of PACKMOL's solvate.tcl; for a PDMAEMA brush it gives about 0.7 g/cm3 of water next to 0.3 g/cm3 of
+        polymer), started at brush_fill (0.9) of it and lowered by 10% while PACKMOL cannot place it;
+      layer (z_free to top): the target density, corrected until the measured density of the layer is within 3%.
+    Both zones get the same composition. Returns per-component lists of molecule blocks and the counts."""
+    s = cfg["solvent"]; rho = s["_rho_mix"]
+    x0, y0, x1, y1, top = box
+    write_pdb(d / "fixed.pdb", fixed_blocks)
     area = (x1 - x0) * (y1 - y0)
-    z_solute = max(x[:, 2].max() for _, x in solute_blocks)
-    m_solute = sum(mass(a) for a, _ in solute_blocks) + n_ion * MASS.get(element(s["counterion"]), 35.45)
-    n_w = max(1, round((s["density"] * AMU_PER_A3 * area * top_z - m_solute) / M_WATER))
-    for it in range(3):
+    Xf = np.vstack([x for _, x in fixed_blocks]); mf = np.array([MASS.get(element(a["name"]), 12.011)
+                                                                  for atoms, _ in fixed_blocks for a in atoms])
+    inside = (Xf[:, 0] > x0) & (Xf[:, 0] < x1) & (Xf[:, 1] > y0) & (Xf[:, 1] < y1)
+    m_brush = mf[inside & (Xf[:, 2] < z_free)].sum(); m_layer = mf[inside & (Xf[:, 2] >= z_free)].sum()
+    fill_b = s.get("brush_fill", 0.9)
+    n_b = counts(comps, fill_b * max(rho * AMU_PER_A3 * area * z_free - m_brush, 0.0)) if z_free > 0 else [0] * len(comps)
+    n_l = counts(comps, rho * AMU_PER_A3 * area * (top - z_free) - m_layer)
+    log(f"solvent: brush zone 0 to {z_free:.1f} A: " + ", ".join(f"{k} {c['name']}" for c, k in zip(comps, n_b))
+        + f" ({100 * fill_b:.0f}% of the solvate.tcl estimate); layer to {top:.1f} A: "
+        + ", ".join(f"{k} {c['name']}" for c, k in zip(comps, n_l)))
+    for it in range(8):
         inp = (f"tolerance 2.0\nfiletype pdb\noutput solvated.pdb\nadd_amber_ter\nseed -1\n"
-               f"structure solute.pdb\n  number 1\n  fixed 0. 0. 0. 0. 0. 0.\nend structure\n"
-               f"structure water.pdb\n  number {n_w}\n  inside box {x0:.3f} {y0:.3f} 0. {x1:.3f} {y1:.3f} {top_z:.3f}\n"
-               f"end structure\n")
-        if n_ion:
-            inp += (f"structure {ion}\n  number {n_ion}\n  inside box {ion_box[0]:.3f} {ion_box[1]:.3f} 1. "
-                    f"{ion_box[2]:.3f} {ion_box[3]:.3f} {top_z - 1:.3f}\nend structure\n")
+               f"structure fixed.pdb\n  number 1\n  fixed 0. 0. 0. 0. 0. 0.\nend structure\n")
+        groups = []
+        for c, kb, kl in zip(comps, n_b, n_l):
+            groups += [(c, kb, 0.0, z_free), (c, kl, z_free, top)]
+        for c, k, z0, z1 in groups:
+            if k > 0:
+                inp += (f"structure {c['pdb']}\n  number {k}\n  inside box {x0:.3f} {y0:.3f} {z0:.3f} {x1:.3f} {y1:.3f} "
+                        f"{z1:.3f}\nend structure\n")
         if not packmol(cfg, inp, d):
-            raise RuntimeError(f"PACKMOL could not solvate the system in {d} (see packmol.log)")
+            n_b = [int(0.9 * k) for k in n_b]                       # brush zone too full: 10% less, try again
+            log(f"solvent pass {it + 1}: PACKMOL could not place it; brush zone lowered to "
+                + ", ".join(f"{k} {c['name']}" for c, k in zip(comps, n_b)))
+            if it == 7:
+                raise RuntimeError(f"PACKMOL could not place the solvent in {d} (see packmol.log)")
+            continue
         atoms, X = read_pdb(d / "solvated.pdb")
-        o = np.array([a["res"].strip() == "WAT" and a["name"].strip() == "O" for a in atoms])
-        layer = o & (X[:, 2] > z_solute + 3) & (X[:, 2] < top_z - 3)
-        rho = layer.sum() * M_WATER / AMU_PER_A3 / (area * max(top_z - z_solute - 6, 1.0))
-        log(f"solvation pass {it + 1}: {n_w} water molecules, {rho:.3f} g/cm3 in the water layer above the solute")
-        if abs(rho / s["density"] - 1) < 0.03 or top_z - z_solute < 12:
+        k0 = sum(len(a) for a, _ in fixed_blocks)
+        mols = {c["name"]: [] for c in comps}; layer_mass = 0.0
+        for c, k, z0, z1 in groups:
+            for _ in range(max(k, 0)):
+                a, x = atoms[k0:k0 + c["n_atoms"]], X[k0:k0 + c["n_atoms"]]
+                mols[c["name"]].append((a, x)); k0 += c["n_atoms"]
+                if z_free + 3 < x.mean(0)[2] < top - 3:
+                    layer_mass += c["M"]
+        rho_layer = layer_mass / AMU_PER_A3 / (area * max(top - z_free - 6, 1.0))
+        log(f"solvent pass {it + 1}: brush zone " + ", ".join(f"{k} {c['name']}" for c, k in zip(comps, n_b))
+            + "; layer " + ", ".join(f"{k} {c['name']}" for c, k in zip(comps, n_l))
+            + f"; {rho_layer:.3f} g/cm3 in the layer (target {rho:.3f})")
+        if abs(rho_layer / rho - 1) < 0.03 or top - z_free < 12:
             break
-        n_w = round(n_w * s["density"] / rho)
-    return d / "solvated.pdb", n_w
+        n_l = [max(1, round(k * rho / rho_layer)) for k in n_l]
+    n = [a + b for a, b in zip(n_b, n_l)]
+    return [mols[c["name"]] for c in comps], n
 
 
-def remove_clashes(blocks, box, cut=2.0):
-    """drop water molecules (blocks of residue WAT) with a heavy atom closer than cut to a heavy atom of another
-    molecule under periodic boundaries; chains and ions are kept"""
-    from scipy.spatial import cKDTree
+def remove_clashes(blocks, removable, box, cut=2.0):
+    """drop removable molecules (solvent) with a heavy atom closer than cut to a heavy atom of another molecule under
+    periodic boundaries; removable is 0 for fixed molecules, otherwise a priority (the abundance of the molecule's
+    component), so that of two clashing solvent molecules the one of the more abundant component goes"""
     X = np.vstack([x for _, x in blocks]); owner = np.concatenate([[k] * len(x) for k, (_, x) in enumerate(blocks)])
-    names = [a["name"].strip() for a, _ in blocks for a in a]
-    heavy = np.array([not n.startswith("H") for n in names])
-    is_w = np.array([a[0]["res"].strip() == "WAT" for a, _ in blocks])
+    heavy = np.array([not a["name"].strip().startswith("H") for b in blocks for a in b[0]])
     idx = np.where(heavy)[0]
     t = cKDTree(X[idx] % box, boxsize=box)
     drop = set()
@@ -339,79 +430,146 @@ def remove_clashes(blocks, box, cut=2.0):
         bi, bj = owner[idx[i]], owner[idx[j]]
         if bi == bj or bi in drop or bj in drop:
             continue
-        if is_w[bj]:
+        if removable[bi] and removable[bj]:                       # both solvent: drop the more abundant component
+            drop.add(bi if removable[bi] >= removable[bj] else bj)
+        elif removable[bj]:
             drop.add(bj)
-        elif is_w[bi]:
+        elif removable[bi]:
             drop.add(bi)
+    return [b for k, b in enumerate(blocks) if k not in drop], [r for k, r in enumerate(removable) if k not in drop], len(drop)
+
+
+def exact_composition(blocks, comps):
+    """after the cut the numbers of molecules of a mixture deviate from the composition by chance; remove the surplus
+    of the over-represented components, highest molecules first (from the free solvent above the brush)"""
+    if len(comps) < 2:
+        return blocks, 0
+    idx = {c["res"]: [k for k, (a, _) in enumerate(blocks) if a[0]["res"].strip() == c["res"]] for c in comps}
+    scale = min(len(idx[c["res"]]) / c["unit"] for c in comps)
+    drop = set()
+    for c in comps:
+        surplus = len(idx[c["res"]]) - int(math.floor(scale * c["unit"] + 1e-9))
+        allowed = max(1, int(0.05 * len(idx[c["res"]])))         # at most 5% of a component (at least 1 molecule)
+        if surplus > allowed:
+            log(f"composition: {c['name']} would need {surplus} removals (> 5%); kept, see the composition in system.json")
+            surplus = allowed
+        if surplus > 0:
+            top_first = sorted(idx[c["res"]], key=lambda k: -blocks[k][1][:, 2].mean())
+            drop.update(top_first[:surplus])
     return [b for k, b in enumerate(blocks) if k not in drop], len(drop)
 
 
-def tleap_box(cfg, d, pdb, box):
-    (d / "tleap.in").write_text(leap_header(cfg, water=True) + f"mol = loadpdb {pdb}\n"
-                                f"set mol box {{ {box[0]:.3f} {box[1]:.3f} {box[2]:.3f} }}\n"
-                                "charge mol\nsavepdb mol system.pdb\nsaveamberparm mol system.prmtop system.inpcrd\nquit\n")
-    log_text = run(["tleap", "-f", "tleap.in"], d)
-    (d / "leap.out").write_text(log_text)
-    q = re.findall(r"Total unperturbed charge:\s*([-\d.]+)", log_text)
-    log(f"tleap: system.prmtop written, total charge {q[-1] if q else '?'}")
-
-
-def charge_of(cfg, atoms_blocks):
+def charge_of(cfg, blocks):
     """number of protonated units (net charge) of the chains"""
     prot = {rn for k, m in cfg["monomers"].items() if m["protonated"] for rn in residue_names(k).values()}
-    return sum(len({a["resid"] for a in atoms if a["res"].strip() in prot}) for atoms, _ in atoms_blocks)
+    return sum(len({a["resid"] for a in atoms if a["res"].strip() in prot}) for atoms, _ in blocks)
+
+
+def place_ions(cfg, d, fixed_blocks, n_ion, box, L=None):
+    """counterions inside box (x0, y0, x1, y1, top), 1 A from its faces, against the fixed blocks; with L, the ions are
+    placed in the central cell and their periodic copies (within the margin) are returned as well"""
+    s = cfg["solvent"]
+    if n_ion == 0:
+        return [], []
+    ion = ion_pdb(s["counterion"], d)
+    write_pdb(d / "fixed.pdb", fixed_blocks)
+    x0, y0, x1, y1, top = box
+    for attempt in range(10):
+        inp = (f"tolerance 2.0\nfiletype pdb\noutput ions.pdb\nseed -1\n"
+               f"structure fixed.pdb\n  number 1\n  fixed 0. 0. 0. 0. 0. 0.\nend structure\n"
+               f"structure {ion}\n  number {n_ion}\n  inside box {x0 + 1:.3f} {y0 + 1:.3f} 1. {x1 - 1:.3f} {y1 - 1:.3f} "
+               f"{top - 1:.3f}\nend structure\n")
+        if not packmol(cfg, inp, d):
+            raise RuntimeError(f"PACKMOL could not place the counterions in {d} (see packmol.log)")
+        atoms, X = read_pdb(d / "ions.pdb")
+        ions = [([a], x[None]) for a, x in zip(atoms[-n_ion:], X[-n_ion:])]
+        if L is None:
+            return ions, []
+        # ions must also keep their distance to the periodic images of the other ions
+        P = np.array([x[0] for _, x in ions])
+        t = cKDTree((P - [L, L, 0]) % [L, L, 1e6], boxsize=[L, L, 1e6])
+        if not len(t.query_pairs(2.0)):
+            break
+    images = [(a, y) for a, x in ions for y in copies(x, L, 0.5 * L)]   # same range as the chain copies
+    return ions, images
+
+
+def solvent_report(cfg, comps, n):
+    tot = sum(n); out = {}
+    vols = [k * c["M"] / c["rho"] for c, k in zip(comps, n)]
+    for c, k, v in zip(comps, n, vols):
+        out[c["name"]] = {"molecules": k, "mole_fraction": round(k / tot, 4), "volume_percent": round(100 * v / sum(vols), 2)}
+    return out
 
 
 def step_solvate(cfg):
     out = cfg["_out"] / "solvate"; out.mkdir(parents=True, exist_ok=True)
     s = cfg["solvent"]; P = json.loads((cfg["_out"] / "pack" / "pack.json").read_text())
-    L = P["cell"]
+    L, m = P["cell"], s["margin"]
     atoms, X = read_pdb(cfg["_out"] / "pack" / "region.pdb")
     sizes = [len(read_pdb(f)[0]) for f in chain_files(cfg)]
-    n_c, all_blocks, k = P["n_central"], [], 0
-    for c in P["block_chain"]:                                  # central chains first, then the copies
-        n = sizes[c]; all_blocks.append((atoms[k:k + n], X[k:k + n])); k += n
-    blocks, copy_blocks = all_blocks[:n_c], all_blocks[n_c:]
-    q = charge_of(cfg, blocks)
-    allX = np.vstack([x for _, x in blocks + copy_blocks])
-    lo = allX[:, :2].min(0) - s["shell_xy"]; hi = allX[:, :2].max(0) + s["shell_xy"]
-    top = allX[:, 2].max() + s["shell_z"]
-    path, n_w = solvate_box(cfg, out, blocks + copy_blocks, (lo[0], lo[1], hi[0], hi[1]), q, (L, L, 2 * L, 2 * L), top)
-    # cut: central chains, all ions (they are in the central cell), water molecules whose O lies in the central cell
-    satoms, SX = read_pdb(path)
-    n_sol = sum(len(a) for a, _ in blocks + copy_blocks)
-    keep = [(a, x - [L, L, 0]) for a, x in blocks]
-    W_atoms, W_X, I_atoms, I_X = [], [], [], []
-    k = n_sol
-    while k < len(satoms):
-        if satoms[k]["res"].strip() == "WAT":
-            o = SX[k]
-            if L <= o[0] < 2 * L and L <= o[1] < 2 * L:
-                W_atoms += satoms[k:k + 3]; W_X.append(SX[k:k + 3] - [L, L, 0])
-            k += 3
-        else:
-            I_atoms.append(satoms[k]); I_X.append(SX[k] - [L, L, 0]); k += 1
-    box = (L, L, top + 2.0)                                     # a gap of one tolerance at the z boundary
-    blocks_final = keep + [([a], np.array([x])) for a, x in zip(I_atoms, I_X)] + \
-        [(W_atoms[3 * i:3 * i + 3], W_X[i]) for i in range(len(W_X))]
-    blocks_final, n_drop = remove_clashes(blocks_final, np.array(box))
-    log(f"cut: {n_drop} water molecules removed that clashed across the periodic boundaries")
-    W_X = [x for a, x in blocks_final if a[0]["res"].strip() == "WAT"]
-    write_pdb(out / "cut.pdb", blocks_final, cryst=box)
+    blocks, k = [], 0
+    for c in P["block_chain"]:                                    # central chains first, then the copies
+        blocks.append((atoms[k:k + sizes[c]], X[k:k + sizes[c]])); k += sizes[c]
+    central, copy_blocks = blocks[:P["n_central"]], blocks[P["n_central"]:]
+    z_poly = max(x[:, 2].max() for _, x in blocks)
+    layer = max(30.0, 0.5 * z_poly) if s["layer"] == "auto" else float(s["layer"])
+    top = z_poly + layer
+    comps = components(cfg, out)
+    log(f"solvent: " + ", ".join(f"{c['name']} {100 * c['f']:.1f} {'vol%' if s['mode'] == 'volume' else 'mol%'}"
+                                 for c in comps) + f", mixture density {s['_rho_mix']:.3f} g/cm3, water model "
+        f"{s['water_model']}; layer {layer:.1f} A above the brush (top {top:.1f} A)")
+    # counterions: in the central cell against chains and copies, then copied into the margin like the chains
+    q = charge_of(cfg, central)
+    ions, ion_images = place_ions(cfg, out, central + copy_blocks, q, (L, L, 2 * L, 2 * L, top), L)
+    log(f"counterions: {len(ions)} {s['counterion']} in the cell, {len(ion_images)} periodic copies around it")
+    # solvent: central cell plus margin
+    mols, n = fill(cfg, out, central + copy_blocks + ions + ion_images, (L - m, L - m, 2 * L + m, 2 * L + m, top),
+                   comps, z_poly)
+    # cut: central chains and ions, solvent molecules whose centre lies in the central cell; shift to the origin
+    shift = np.array([L, L, 0.0])
+    keep = [(a, x - shift) for a, x in central] + [(a, x - shift) for a, x in ions]
+    removable = [0] * len(keep)
+    for blocks_c in mols:
+        for a, x in blocks_c:
+            c = x.mean(0)
+            if L <= c[0] < 2 * L and L <= c[1] < 2 * L:
+                keep.append((a, x - shift)); removable.append(len(blocks_c))
+    box = (L, L, top + 2.0)                                       # a gap of one tolerance at the z boundary
+    keep, removable, n_drop = remove_clashes(keep, removable, np.array(box))
+    log(f"cut: central cell kept, {n_drop} solvent molecules removed that clashed across the periodic boundaries")
+    keep, n_fix = exact_composition(keep, comps)
+    if n_fix:
+        log(f"composition: {n_fix} surplus solvent molecules removed from the top of the box to restore the ratio")
+    final_n = [sum(1 for a, _ in keep if a[0]["res"].strip() == c["res"]) for c in comps]
+    write_pdb(out / "cut.pdb", keep, cryst=box)
     tleap_box(cfg, out, "cut.pdb", box)
-    # residue numbers of the grafted (head) units in the topology: chains come first, in order
-    first, r = [], 1
-    for a_, _ in keep:
+    first, r = [], 1                                               # residue numbers of the grafted (head) units
+    for a_, _ in central:
         first.append(r); r += len({x["resid"] for x in a_})
     mask = ":" + ",".join(map(str, first))
-    log(f"restraint mask of the grafted units (keep them on their plane during MD): {mask}")
-    (out / "system.json").write_text(json.dumps({"box": box, "restraint_mask": mask, "n_chains": len(keep),
-                                                 "n_water": len(W_X),
-                                                 "n_water_removed_clashes": n_drop,
-                                                 "n_ions": len(I_X), "n_water_region": n_w,
-                                                 "grafting_density_nm2": len(keep) / (L / 10) ** 2}, indent=1))
-    log(f"solvate: box {box[0]:.2f} x {box[1]:.2f} x {box[2]:.2f} A, {len(keep)} chains, {len(W_X)} water, "
-        f"{len(I_X)} ions")
+    rep = solvent_report(cfg, comps, final_n)
+    (out / "system.json").write_text(json.dumps({
+        "box": box, "restraint_mask": mask, "n_chains": len(central), "n_ions": len(ions),
+        "grafting_density_nm2": len(central) / (L / 10) ** 2, "solvent": rep,
+        "solvent_removed_clashes": n_drop, "water_model": s["water_model"]}, indent=1))
+    log(f"restraint mask of the grafted units: {mask}")
+    log(f"solvate: box {box[0]:.2f} x {box[1]:.2f} x {box[2]:.2f} A, {len(central)} chains, {len(ions)} ions, "
+        + ", ".join(f"{v['molecules']} {k} ({100 * v['mole_fraction']:.1f} mol%, {v['volume_percent']:.1f} vol%)"
+                    for k, v in rep.items()))
+
+
+def tleap_box(cfg, d, pdb, box):
+    (d / "tleap.in").write_text(leap_header(cfg, solvent=True) + f"mol = loadpdb {pdb}\n"
+                                f"set mol box {{ {box[0]:.3f} {box[1]:.3f} {box[2]:.3f} }}\n"
+                                "charge mol\nsavepdb mol system.pdb\nsaveamberparm mol system.prmtop system.inpcrd\nquit\n")
+    out = run(["tleap", "-f", "tleap.in"], d)
+    (d / "leap.out").write_text(out)
+    errors = re.findall(r"Errors = (\d+)", out)
+    if not errors or int(errors[-1]) > 0 or not (d / "system.prmtop").exists():
+        raise RuntimeError(f"tleap failed in {d} (see leap.out)")
+    q = re.findall(r"Total unperturbed charge:\s*([-\d.]+)", out)
+    log(f"tleap: system.prmtop written, total charge {q[-1] if q else '?'}")
 
 
 # ------------------------------------------------------------------ 5 single
@@ -423,15 +581,13 @@ def step_single(cfg):
         atoms, X = read_pdb(f)
         X = X - X.min(0) + shell
         hi = X.max(0) + shell
-        q = charge_of(cfg, [(atoms, X)])
-        path, _ = solvate_box(cfg, d, [(atoms, X)], (0, 0, hi[0], hi[1]), q, (0, 0, hi[0], hi[1]), hi[2])
-        satoms, SX = read_pdb(path)
-        n, k, rest = len(atoms), len(atoms), []
-        while k < len(satoms):                                     # water molecules (3 atoms) and ions (1 atom)
-            m = 3 if satoms[k]["res"].strip() == "WAT" else 1
-            rest.append((satoms[k:k + m], SX[k:k + m])); k += m
+        comps = components(cfg, d)
+        ions, _ = place_ions(cfg, d, [(atoms, X)], charge_of(cfg, [(atoms, X)]), (0, 0, hi[0], hi[1], hi[2]))
+        mols, n = fill(cfg, d, [(atoms, X)] + ions, (0, 0, hi[0], hi[1], hi[2]), comps, X[:, 2].max())
+        blocks = [(atoms, X)] + ions + [b for m in mols for b in m]
+        removable = [0] * (1 + len(ions)) + [len(m) for m in mols for _ in m]
         box = (hi[0] + 2.0, hi[1] + 2.0, hi[2] + 2.0)
-        blocks, n_drop = remove_clashes([(atoms, SX[:n])] + rest, np.array(box))
+        blocks, removable, n_drop = remove_clashes(blocks, removable, np.array(box))
         write_pdb(d / "single.pdb", blocks, cryst=box)
         tleap_box(cfg, d, "single.pdb", box)
 
@@ -441,7 +597,7 @@ STEPS = {"params": step_params, "chains": step_chains, "pack": step_pack, "solva
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("config", help="TOML configuration (see examples/pdmaema/config.toml)")
+    ap.add_argument("config", help="TOML configuration (see examples/pdmaema/)")
     ap.add_argument("step", choices=list(STEPS) + ["all"])
     a = ap.parse_args()
     cfg = load_config(a.config)

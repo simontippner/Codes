@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Images of the tutorial (docs/TUTORIAL.md) from the output of a brush_builder run.
-Usage:  python3 make_tutorial_images.py <output folder> [<image folder>]
+Usage:  python3 make_tutorial_images.py <output folder> [<image folder>] [<file prefix>]
         (default: ../examples/pdmaema/output_quick -> images/)
 Chains as sticks (heavy atoms; central chains wine, periodic copies grey), N of protonated units amber, grafted atoms
 black, water O light blue, counterions green; orthographic views."""
@@ -19,7 +19,9 @@ from scipy.spatial import cKDTree
 HERE = Path(__file__).resolve().parent
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent / "examples" / "pdmaema" / "output_quick"
 IMG = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "images"
+PRE = sys.argv[3] if len(sys.argv) > 3 else ""
 IMG.mkdir(parents=True, exist_ok=True)
+OTHER = ["#3a3a3a", "#8a6d3b", "#5b3a7a"]                     # further solvent components (molecule centres)
 WINE, ROSE, AMBER, GREY, INK = "#8C1D40", "#E76D83", "#E9A23B", "#b9b3ad", "#1a1a1a"
 WATER, CL, GRID = "#7da2ee", "#2fa55a", "#d9d4cf"
 plt.rcParams.update({"font.size": 9, "axes.edgecolor": "#555555", "axes.linewidth": 0.7, "savefig.dpi": 130,
@@ -93,23 +95,25 @@ for k, (ax, f) in enumerate(zip(np.atleast_1d(axs), chain_files)):
     n_p = sum(1 for r in seqs[k] if r[1] == "P")
     ax.set_title(f"chain {k + 1}\n{n_p} of {len(seqs[k])} protonated", fontsize=8)
 fig.suptitle("step 2  chains: random sequences, aligned along z (black: grafted atom)", fontsize=9, y=1.02)
-fig.savefig(IMG / "02_chains.png"); plt.close(fig)
+fig.savefig(IMG / (PRE + "02_chains.png")); plt.close(fig)
 
-# 3a smallest box (top and side view)
-X, res, name = read(OUT / "pack" / "box.pdb")
-ch = split_chains(X, res, name, sizes)
-fig, (a1, a2) = plt.subplots(1, 2, figsize=(7.2, 3.2), gridspec_kw=dict(width_ratios=[1, 1.2]))
-L0 = P["smallest_box"]
-for ax, dims, title in ((a1, [0, 1], f"top view: {L0:.1f} x {L0:.1f} A"), (a2, [0, 2], "side view")):
-    pn = sticks2d(ax, ch, dims, WINE)
-    ax.scatter(pn[:, dims[0]], pn[:, dims[1]], s=8, color=AMBER, zorder=3)
-    g = np.array([c[3] for c in ch]); ax.scatter(g[:, dims[0]], g[:, dims[1]], s=18, color=INK, zorder=4)
-    if dims == [0, 1]:
-        ax.add_patch(plt.Rectangle((0, 0), L0, L0, fill=False, ec=ROSE, lw=1.4))
-    ax.set_aspect("equal"); ax.autoscale(); ax.set_title(title, fontsize=9); ax.set_xlabel("x (A)")
-    ax.set_ylabel("y (A)" if dims == [0, 1] else "z (A)")
-fig.suptitle("step 3a  smallest square box holding all chains upright at the tolerance", fontsize=9, y=1.0)
-fig.savefig(IMG / "03a_smallest_box.png"); plt.close(fig)
+if (OUT / "pack" / "box.pdb").exists():                     # densest mode only
+    # 3a smallest box (top and side view)
+    X, res, name = read(OUT / "pack" / "box.pdb")
+    ch = split_chains(X, res, name, sizes)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(7.2, 3.2), gridspec_kw=dict(width_ratios=[1, 1.2]))
+    L0 = P["smallest_box"]
+    for ax, dims, title in ((a1, [0, 1], f"top view: {L0:.1f} x {L0:.1f} A"), (a2, [0, 2], "side view")):
+        pn = sticks2d(ax, ch, dims, WINE)
+        ax.scatter(pn[:, dims[0]], pn[:, dims[1]], s=8, color=AMBER, zorder=3)
+        g = np.array([c[3] for c in ch]); ax.scatter(g[:, dims[0]], g[:, dims[1]], s=18, color=INK, zorder=4)
+        if dims == [0, 1]:
+            ax.add_patch(plt.Rectangle((0, 0), L0, L0, fill=False, ec=ROSE, lw=1.4))
+        ax.set_aspect("equal"); ax.autoscale(); ax.set_title(title, fontsize=9); ax.set_xlabel("x (A)")
+        ax.set_ylabel("y (A)" if dims == [0, 1] else "z (A)")
+    fig.suptitle("step 3a  smallest square box holding all chains upright at the tolerance", fontsize=9, y=1.0)
+    fig.savefig(IMG / (PRE + "03a_smallest_box.png")); plt.close(fig)
+
 
 # 3b periodic packing: central chains and copies in the 3 x 3 region
 X, res, name = read(OUT / "pack" / "region.pdb")
@@ -132,24 +136,29 @@ for i in range(4):
 view3d(a2, (0, 0, 0), (R, R, P["height"]))
 fig.suptitle(f"step 3b  periodic packing: {P['n_central']} chains (wine) and {P['n_copies']} copies (grey) "
              f"in the 3 x 3 region", fontsize=9, y=1.0)
-fig.savefig(IMG / "03b_periodic_packing.png"); plt.close(fig)
+fig.savefig(IMG / (PRE + "03b_periodic_packing.png")); plt.close(fig)
 
-# 4a solvation of the whole region (side view, slab through the central cell)
+# 4a solvation of the central cell around the chains, their copies and the counterions with their copies
 X, res, name = read(OUT / "solvate" / "solvated.pdb")
 n_sol = sum(sizes[c] for c in P["block_chain"])
 blocks = split_chains(X[:n_sol], res[:n_sol], name[:n_sol], [sizes[c] for c in P["block_chain"]])
 wo = (res == "WAT") & (name == "O"); cl = np.char.startswith(res, "Cl")
-slab = (X[:, 1] > L) & (X[:, 1] < 2 * L)
 fig, ax = plt.subplots(figsize=(7.2, 3.6))
-ax.scatter(X[wo & slab, 0], X[wo & slab, 2], s=1.2, color=WATER, alpha=0.6, lw=0, zorder=1)
+ax.scatter(X[wo, 0], X[wo, 2], s=1.2, color=WATER, alpha=0.6, lw=0, zorder=1)
+others = sorted({r for r in res[n_sol:] if r not in ("WAT",) and not r.startswith("Cl")})
+for k, r in enumerate(others):
+    sel = (res == r) & np.array([n[0] != "H" for n in name]); sel[:n_sol] = False
+    ax.scatter(X[sel, 0], X[sel, 2], s=4, color=OTHER[k % 3], lw=0, zorder=2, label=r)
 sticks2d(ax, [b for b in blocks[P["n_central"]:]], [0, 2], GREY, lw=0.5, zorder=2)
 sticks2d(ax, blocks[:P["n_central"]], [0, 2], WINE, lw=0.8, zorder=3)
 ax.scatter(X[cl, 0], X[cl, 2], s=10, color=CL, zorder=4)
 ax.axvline(L, color=ROSE, lw=1.4); ax.axvline(2 * L, color=ROSE, lw=1.4)
+if others:
+    ax.legend(loc="upper right", fontsize=8, frameon=False, markerscale=2)
 ax.set_aspect("equal"); ax.set_xlabel("x (A)"); ax.set_ylabel("z (A)")
-ax.set_title("step 4  the whole region solvated (water O in a slab through the central cell), "
-             "counterions (green) in the central cell", fontsize=9)
-fig.savefig(IMG / "04a_solvated_region.png"); plt.close(fig)
+ax.set_title("step 4  the central cell (rose lines) solvated around the chains, their copies (grey) and the "
+             "counterions (green)", fontsize=9)
+fig.savefig(IMG / (PRE + "04a_solvated_region.png")); plt.close(fig)
 
 # 4b final periodic box
 X, res, name = read(OUT / "solvate" / "system.pdb")
@@ -167,9 +176,15 @@ a1.set_aspect("equal"); a1.set_xlabel("x (A)"); a1.set_ylabel("z (A)"); a1.set_t
 sticks3d(a2, ch, WINE, 0.9)
 a2.scatter(X[wo, 0], X[wo, 1], X[wo, 2], s=1, color=WATER, alpha=0.35, lw=0)
 a2.scatter(X[cl, 0], X[cl, 1], X[cl, 2], s=10, color=CL)
+for k, r in enumerate(sorted({r for r in res if r not in ("WAT",) and not r.startswith("Cl")} - set(res[:n_pol]))):
+    sel = (res == r) & np.array([n[0] != "H" for n in name])
+    a1.scatter(X[sel, 0], X[sel, 2], s=5, color=OTHER[k % 3], lw=0, zorder=3, label=r)
+    a2.scatter(X[sel, 0], X[sel, 1], X[sel, 2], s=4, color=OTHER[k % 3])
+    a1.legend(loc="upper right", fontsize=8, frameon=False, markerscale=2)
 box3d(a2, 0, 0, box[0], box[1], box[2], ROSE, 1.2)
 view3d(a2, (0, 0, 0), box)
-fig.suptitle(f"step 4  periodic box {box[0]:.1f} x {box[1]:.1f} x {box[2]:.1f} A: {S['n_chains']} chains, "
-             f"{S['n_water']} water, {S['n_ions']} Cl-", fontsize=9, y=1.0)
-fig.savefig(IMG / "04b_final_box.png"); plt.close(fig)
+solv = ", ".join(f"{v['molecules']} {k}" for k, v in S["solvent"].items())
+fig.suptitle(f"step 4  periodic box {box[0]:.1f} x {box[1]:.1f} x {box[2]:.1f} A: {S['n_chains']} chains, {solv}, "
+             f"{S['n_ions']} Cl-", fontsize=9, y=1.0)
+fig.savefig(IMG / (PRE + "04b_final_box.png")); plt.close(fig)
 print("images in", IMG, sorted(p.name for p in IMG.glob("*.png")))

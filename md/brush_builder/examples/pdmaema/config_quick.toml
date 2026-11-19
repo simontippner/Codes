@@ -1,5 +1,5 @@
-# Quick test of the whole pipeline: 4 chains of 8 units (4 protonated), tolerance 5 A; a few minutes.
-# Run:  python3 ../../brush_builder.py config_quick.toml all
+# Quick test: 4 chains of 8 units at a grafting density of 0.5 nm^-2 (box from the density), TIP3P water.
+# Run:  python3 ../../brush_builder.py config_quick.toml all     (a few minutes)
 output = "output_quick"
 
 [tools]
@@ -13,8 +13,8 @@ DB = { ac = "monomers/ddb.ac", protonated = false }
 PA = { ac = "monomers/dpa.ac", protonated = true }
 PB = { ac = "monomers/dpb.ac", protonated = true }
 
-# prepgen definitions (atom names of the monomer files): the backbone runs from head_name to tail_name; the head unit
-# keeps the end group (methyl, stand-in for the polystyrene block), the tail unit keeps the H cap
+# prepgen definitions (atom names of the monomer files): backbone from head_name to tail_name; the head unit keeps
+# the end group (methyl, stand-in for the polystyrene block), the tail unit keeps the H cap
 [residues]
 head_name = "C7"
 tail_name = "C6"
@@ -24,23 +24,25 @@ pre_head_type = "c3"
 post_tail_type = "c3"
 
 [chains]
-n_chains = 4
 n_units = 8
-alpha = 0.5
+alpha = 0.5                         # fraction of protonated units
 seed = 1
 
 [brush]
-tolerance = 5.0                     # minimum distance between chains (A); sets the grafting density
+chains_per_box = 4
+grafting_density = 0.5             # chains per nm^2: box side sqrt(4 / 0.5) nm = 28.3 A
+min_distance = 5.0                  # minimum distance between chains during packing (A)
 anchor_atom = 2                     # atom of the head unit grafted to the plane
 anchor_z = 1.2
-box_step = 0.5                      # (a) smallest box search
-max_attempts = 2                    # (b) attempts per chain before restarting with chain 1
-max_fail = 30                       # (b) failed packings before the region is enlarged
-region_step = 1.0                   # (b) enlargement of the 3 x 3 region (A)
+max_attempts = 2                    # attempts per chain before restarting with chain 1
+max_fail = 30                       # failed packings before the region is enlarged (densest mode)
+box_step = 0.5                      # densest mode: widening of the first box (A)
+region_step = 1.0                   # densest mode: enlargement of the 3 x 3 region (A)
 
 [solvent]
-density = 1.0                       # g/cm3
-shell_xy = 5.0                      # water beyond the polymer laterally (A)
-shell_z = 30.0                      # water above the brush (A)
+water_model = "tip3p"               # tip3p, spce, opc or spcfw
+layer = 30.0                        # solvent above the brush (A), or "auto" = max(30 A, half the brush height)
+margin = 0.0                        # solvent packed beyond the cell before the cut (A); 0: only the cell
 counterion = "Cl-"
-shell_single = 30.0                 # water around single chains (step single)
+shell_single = 30.0                 # solvent around single chains (step single)
+components = [ { name = "water", fraction = 100 } ]

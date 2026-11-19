@@ -1,0 +1,28 @@
+Remark line goes here
+MASS
+CT 12.010        0.878               same as c3
+HC 1.008         0.135               same as hc
+OH 16.000        0.465               same as oh
+HO 1.008         0.135               same as ho
+
+BOND
+CT-HC  345.25   1.096       same as c3-hc, penalty score=  0.0
+CT-OH  285.15   1.424       same as c3-oh, penalty score=  0.0
+HO-OH  535.51   0.973       same as ho-oh, penalty score=  0.0
+
+ANGLE
+CT-OH-HO   65.130     107.390   same as c3-oh-ho, penalty score=  0.0
+HC-CT-HC   35.800     107.730   same as hc-c3-hc, penalty score=  0.0
+HC-CT-OH   62.800     109.500   same as hc-c3-oh, penalty score=  0.0
+
+DIHE
+HC-CT-OH-HO   3    0.500         0.000           3.000      same as X -c3-oh-X , penalty score=  0.0
+
+IMPROPER
+
+NONBON
+  HC          1.3770  0.0150
+  OH          1.7210  0.2104
+  CT          1.9080  0.1094
+  HO          0.0     0.0
+
